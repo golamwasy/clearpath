@@ -1,0 +1,7 @@
+docs/
+
+CLAUDE.md
+
+build/
+.gradle/
+*.hprof
