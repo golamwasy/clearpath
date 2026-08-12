@@ -103,5 +103,57 @@ services:
       MONGO_DATABASE: availability
       AVAILABILITY_HTTP_PORT: "8082"
 
+  nested-pos:
+    build:
+      context: .
+      dockerfile: mocks/nested-pos/Dockerfile
+    ports:
+      - "9001:9001"
+    environment:
+      PORT: "9001"
+      FAIL_EVERY_N: "7"
+      DELAY_MS: "50"
+
+  flat-pos:
+    build:
+      context: .
+      dockerfile: mocks/flat-pos/Dockerfile
+    ports:
+      - "9002:9002"
+    environment:
+      PORT: "9002"
+      FAIL_EVERY_N: "7"
+      DELAY_MS: "50"
+
+  pos-ingest:
+    build:
+      context: .
+      dockerfile: pos-ingest/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      nested-pos:
+        condition: service_started
+      flat-pos:
+        condition: service_started
+    ports:
+      - "8083:8083"
+    environment:
+      POS_DB_URL: postgres://pos_ingest:pos_ingest@postgres:5432/pos_ingest
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      POS_SYNC_TOPIC: pos.sync
+      POS_SYNC_DLQ_TOPIC: pos.sync.dlq
+      POS_HTTP_PORT: "8083"
+      POS_MAX_CONCURRENCY: "5"
+      POS_POLL_INTERVAL: 30s
+      POS_MAX_RETRIES: "4"
+      POS_RETRY_BASE_DELAY: 200ms
+      POS_RETRY_MAX_DELAY: 10s
+      POS_VENUES_CONFIG: /app/venues.json
+    volumes:
+      - ./pos-ingest/venues.json:/app/venues.json:ro
+
 volumes:
   postgres-data:

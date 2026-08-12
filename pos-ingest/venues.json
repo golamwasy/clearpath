@@ -1,0 +1,25 @@
+{
+  "providers": [
+    {
+      "name": "nested-pos",
+      "kind": "nested",
+      "baseUrl": "http://nested-pos:9001",
+      "currency": "USD",
+      "rateRps": 5,
+      "rateBurst": 5
+    },
+    {
+      "name": "flat-pos",
+      "kind": "flat",
+      "baseUrl": "http://flat-pos:9002",
+      "currency": "USD",
+      "rateRps": 5,
+      "rateBurst": 5
+    }
+  ],
+  "venues": [
+    { "venueId": "v-nested-1", "provider": "nested-pos" },
+    { "venueId": "v-nested-2", "provider": "nested-pos" },
+    { "venueId": "v-flat-1", "provider": "flat-pos" }
+  ]
+}

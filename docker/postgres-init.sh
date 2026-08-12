@@ -7,4 +7,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
 
     CREATE USER availability WITH PASSWORD 'availability';
     CREATE DATABASE availability OWNER availability;
+
+    CREATE USER pos_ingest WITH PASSWORD 'pos_ingest';
+    CREATE DATABASE pos_ingest OWNER pos_ingest;
 EOSQL

@@ -5,3 +5,7 @@ CLAUDE.md
 build/
 .gradle/
 *.hprof
+
+mocks/nested-pos/nested-pos
+mocks/flat-pos/flat-pos
+pos-ingest/pos-ingest
