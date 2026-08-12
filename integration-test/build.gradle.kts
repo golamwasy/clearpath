@@ -18,6 +18,7 @@ kotlin {
 }
 
 dependencies {
+    testImplementation(project(":tracing-core"))
     testImplementation(project(":menu-service"))
     testImplementation(project(":availability-service"))
 

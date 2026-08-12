@@ -15,6 +15,7 @@ import (
 	"github.com/clearpath/pos-ingest/internal/provider"
 	"github.com/clearpath/pos-ingest/internal/retry"
 	"github.com/clearpath/pos-ingest/internal/store"
+	"github.com/clearpath/pos-ingest/internal/tracing"
 )
 
 type Pool struct {
@@ -100,6 +101,7 @@ func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) {
 	}
 
 	correlationID := newCorrelationID()
+	ctx = tracing.WithCorrelationID(ctx, correlationID)
 	logger := p.logger.With("venueId", venue.VenueID, "provider", venue.Provider, "correlationId", correlationID)
 
 	run, err := p.store.StartRun(ctx, venue.VenueID, venue.Provider, correlationID)

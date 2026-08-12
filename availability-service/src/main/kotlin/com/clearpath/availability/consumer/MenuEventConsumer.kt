@@ -6,6 +6,8 @@ import com.clearpath.availability.idempotency.IdempotencyStore
 import com.clearpath.availability.model.AvailabilityState
 import com.clearpath.availability.model.MenuEvent
 import com.clearpath.availability.state.RedisAvailabilityStore
+import com.clearpath.tracing.TraceContext
+import com.clearpath.tracing.Tracer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
@@ -27,6 +29,7 @@ class MenuEventConsumer(
     private val idempotencyStore: IdempotencyStore,
     private val redisStore: RedisAvailabilityStore,
     private val auditStore: MongoAuditStore,
+    private val tracer: Tracer,
 ) {
     private val logger = LoggerFactory.getLogger(MenuEventConsumer::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -64,29 +67,33 @@ class MenuEventConsumer(
         }
     }
 
-    private fun processRecord(value: String) {
+    private suspend fun processRecord(value: String) {
         val event = json.decodeFromString<MenuEvent>(value)
         MDC.put("correlationId", event.correlationId)
 
-        val eventId = UUID.fromString(event.eventId)
-        val isNew = idempotencyStore.markProcessedIfNew(eventId, event.eventType)
-        if (!isNew) {
-            logger.info("skipping already-processed event ${event.eventId}")
-            return
+        // menu.events carries a correlationId but no spanId, so the consume span's parent is
+        // unrecoverable — it's emitted with root=true even though it isn't the trace's origin.
+        tracer.withSpan(TraceContext.root(event.correlationId), "kafka.consume ${config.menuEventsTopic}") { ctx ->
+            val eventId = UUID.fromString(event.eventId)
+            val isNew = idempotencyStore.markProcessedIfNew(eventId, event.eventType, ctx)
+            if (!isNew) {
+                logger.info("skipping already-processed event ${event.eventId}")
+                return@withSpan
+            }
+
+            val available = event.eventType != "ItemDeleted"
+            val state = AvailabilityState(
+                venueId = event.venueId,
+                itemId = event.itemId,
+                available = available,
+                version = event.version,
+                updatedAt = Instant.now().toString(),
+            )
+
+            redisStore.put(state, ctx)
+            auditStore.append(event, available)
+
+            logger.info("processed event ${event.eventId} type=${event.eventType} item=${event.itemId}")
         }
-
-        val available = event.eventType != "ItemDeleted"
-        val state = AvailabilityState(
-            venueId = event.venueId,
-            itemId = event.itemId,
-            available = available,
-            version = event.version,
-            updatedAt = Instant.now().toString(),
-        )
-
-        redisStore.put(state)
-        auditStore.append(event, available)
-
-        logger.info("processed event ${event.eventId} type=${event.eventType} item=${event.itemId}")
     }
 }

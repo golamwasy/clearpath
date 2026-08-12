@@ -14,6 +14,8 @@ val kafkaVersion = "3.8.0"
 val logbackVersion = "1.5.8"
 
 dependencies {
+    implementation(project(":tracing-core"))
+
     implementation("io.ktor:ktor-server-core:$ktorVersion")
     implementation("io.ktor:ktor-server-netty:$ktorVersion")
     implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")

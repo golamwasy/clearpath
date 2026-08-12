@@ -11,6 +11,7 @@ import com.clearpath.menu.AppConfig as MenuConfig
 import com.clearpath.menu.db.DatabaseFactory as MenuDatabaseFactory
 import com.clearpath.menu.moduleWith as menuModule
 import com.clearpath.menu.outbox.OutboxRelay
+import com.clearpath.tracing.Tracer
 import com.mongodb.kotlin.client.coroutine.MongoClient
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -69,9 +70,10 @@ class WritePathIntegrationTest {
                 outboxBatchSize = 50,
             )
             val menuDb = MenuDatabaseFactory.connect(menuConfig)
-            val relay = OutboxRelay(menuConfig, menuDb)
+            val menuTracer = Tracer("menu-service", menuConfig.kafkaBootstrapServers, menuConfig.systemTraceTopic)
+            val relay = OutboxRelay(menuConfig, menuDb, menuTracer)
             menuServer = embeddedServer(Netty, port = menuConfig.httpPort) {
-                menuModule(menuDb, relay)
+                menuModule(menuDb, relay, menuTracer)
             }.start(wait = false)
 
             val availabilityConfig = AvailabilityConfig(
@@ -88,15 +90,20 @@ class WritePathIntegrationTest {
                 httpPort = 18082,
             )
             val availabilityDb = AvailabilityDatabaseFactory.connect(availabilityConfig)
+            val availabilityTracer = Tracer(
+                "availability-service",
+                availabilityConfig.kafkaBootstrapServers,
+                availabilityConfig.systemTraceTopic,
+            )
             jedisPool = JedisPool(availabilityConfig.redisHost, availabilityConfig.redisPort)
             val mongoClient = MongoClient.create(availabilityConfig.mongoUri)
-            val redisStore = RedisAvailabilityStore(jedisPool)
+            val redisStore = RedisAvailabilityStore(jedisPool, availabilityTracer)
             val auditStore = MongoAuditStore(mongoClient.getDatabase(availabilityConfig.mongoDatabase))
-            val idempotencyStore = IdempotencyStore(availabilityDb)
-            val consumer = MenuEventConsumer(availabilityConfig, idempotencyStore, redisStore, auditStore)
+            val idempotencyStore = IdempotencyStore(availabilityDb, availabilityTracer)
+            val consumer = MenuEventConsumer(availabilityConfig, idempotencyStore, redisStore, auditStore, availabilityTracer)
 
             availabilityServer = embeddedServer(Netty, port = availabilityConfig.httpPort) {
-                availabilityModule(consumer, redisStore)
+                availabilityModule(consumer, redisStore, availabilityTracer)
             }.start(wait = false)
         }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/clearpath/pos-ingest/internal/model"
+	"github.com/clearpath/pos-ingest/internal/tracing"
 )
 
 // migrationSQL mirrors migrations/0001_sync_runs.sql (kept as a plain file
@@ -33,10 +34,11 @@ CREATE INDEX IF NOT EXISTS sync_runs_venue_started_idx ON sync_runs (venue_id, s
 `
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	tracer *tracing.Tracer
 }
 
-func New(ctx context.Context, dbURL string) (*Store, error) {
+func New(ctx context.Context, dbURL string, tracer *tracing.Tracer) (*Store, error) {
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
@@ -49,7 +51,7 @@ func New(ctx context.Context, dbURL string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("apply migration: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return &Store{pool: pool, tracer: tracer}, nil
 }
 
 func (s *Store) Close() {
@@ -62,18 +64,22 @@ func (s *Store) Ping(ctx context.Context) error {
 
 // StartRun inserts a sync_runs row with status=running and returns it.
 func (s *Store) StartRun(ctx context.Context, venueID, provider, correlationID string) (model.SyncRun, error) {
-	run := model.SyncRun{
-		ID:            newUUID(),
-		VenueID:       venueID,
-		Provider:      provider,
-		StartedAt:     time.Now().UTC(),
-		Status:        model.SyncStatusRunning,
-		CorrelationID: correlationID,
-	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO sync_runs (id, venue_id, provider, started_at, status, items_changed, correlation_id)
-		VALUES ($1, $2, $3, $4, $5, 0, $6)
-	`, run.ID, run.VenueID, run.Provider, run.StartedAt, run.Status, run.CorrelationID)
+	var run model.SyncRun
+	err := s.tracer.WithSpan(ctx, "db.commit sync_runs", func(ctx context.Context) error {
+		run = model.SyncRun{
+			ID:            newUUID(),
+			VenueID:       venueID,
+			Provider:      provider,
+			StartedAt:     time.Now().UTC(),
+			Status:        model.SyncStatusRunning,
+			CorrelationID: correlationID,
+		}
+		_, err := s.pool.Exec(ctx, `
+			INSERT INTO sync_runs (id, venue_id, provider, started_at, status, items_changed, correlation_id)
+			VALUES ($1, $2, $3, $4, $5, 0, $6)
+		`, run.ID, run.VenueID, run.Provider, run.StartedAt, run.Status, run.CorrelationID)
+		return err
+	})
 	if err != nil {
 		return model.SyncRun{}, fmt.Errorf("insert sync run: %w", err)
 	}
@@ -87,11 +93,14 @@ func (s *Store) FinishRun(ctx context.Context, runID string, status model.SyncSt
 		msg := syncErr.Error()
 		errText = &msg
 	}
-	_, err := s.pool.Exec(ctx, `
-		UPDATE sync_runs
-		SET finished_at = $2, status = $3, items_changed = $4, error = $5
-		WHERE id = $1
-	`, runID, time.Now().UTC(), status, itemsChanged, errText)
+	err := s.tracer.WithSpan(ctx, "db.commit sync_runs", func(ctx context.Context) error {
+		_, err := s.pool.Exec(ctx, `
+			UPDATE sync_runs
+			SET finished_at = $2, status = $3, items_changed = $4, error = $5
+			WHERE id = $1
+		`, runID, time.Now().UTC(), status, itemsChanged, errText)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("update sync run: %w", err)
 	}

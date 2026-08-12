@@ -6,6 +6,7 @@ data class AppConfig(
     val dbPassword: String = System.getenv("AVAILABILITY_DB_PASSWORD") ?: "availability",
     val kafkaBootstrapServers: String = System.getenv("KAFKA_BOOTSTRAP_SERVERS") ?: "localhost:9092",
     val menuEventsTopic: String = System.getenv("MENU_EVENTS_TOPIC") ?: "menu.events",
+    val systemTraceTopic: String = System.getenv("SYSTEM_TRACE_TOPIC") ?: "system.trace",
     val consumerGroupId: String = System.getenv("AVAILABILITY_CONSUMER_GROUP") ?: "availability-service",
     val redisHost: String = System.getenv("REDIS_HOST") ?: "localhost",
     val redisPort: Int = System.getenv("REDIS_PORT")?.toIntOrNull() ?: 6379,

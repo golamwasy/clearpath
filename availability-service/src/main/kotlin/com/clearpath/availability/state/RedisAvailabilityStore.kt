@@ -1,20 +1,24 @@
 package com.clearpath.availability.state
 
 import com.clearpath.availability.model.AvailabilityState
+import com.clearpath.tracing.TraceContext
+import com.clearpath.tracing.Tracer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import redis.clients.jedis.JedisPool
 
-class RedisAvailabilityStore(private val pool: JedisPool) {
+class RedisAvailabilityStore(private val pool: JedisPool, private val tracer: Tracer) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     private fun key(venueId: String, itemId: String) = "availability:$venueId:$itemId"
 
-    fun put(state: AvailabilityState) {
-        pool.resource.use { jedis ->
-            jedis.set(key(state.venueId, state.itemId), json.encodeToString(state))
+    suspend fun put(state: AvailabilityState, ctx: TraceContext) {
+        tracer.withSpan(ctx, "redis.write availability") {
+            pool.resource.use { jedis ->
+                jedis.set(key(state.venueId, state.itemId), json.encodeToString(state))
+            }
         }
     }
 

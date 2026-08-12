@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/clearpath/pos-ingest/internal/model"
+	"github.com/clearpath/pos-ingest/internal/tracing"
 )
 
 const correlationIDHeader = "X-Correlation-Id"
@@ -26,32 +27,39 @@ type Handlers struct {
 	store  SyncRunLister
 	ready  Pinger
 	logger *slog.Logger
+	tracer *tracing.Tracer
 }
 
-func NewHandlers(store SyncRunLister, ready Pinger, logger *slog.Logger) *Handlers {
-	return &Handlers{store: store, ready: ready, logger: logger}
+func NewHandlers(store SyncRunLister, ready Pinger, logger *slog.Logger, tracer *tracing.Tracer) *Handlers {
+	return &Handlers{store: store, ready: ready, logger: logger, tracer: tracer}
 }
 
 func (h *Handlers) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /sync-runs", h.correlate(h.listSyncRuns))
-	mux.HandleFunc("GET /health", h.health)
-	mux.HandleFunc("GET /ready", h.readyCheck)
-	mux.HandleFunc("GET /metrics", h.metrics)
+	mux.HandleFunc("GET /sync-runs", h.correlate("GET /sync-runs", h.listSyncRuns))
+	mux.HandleFunc("GET /health", h.correlate("GET /health", h.health))
+	mux.HandleFunc("GET /ready", h.correlate("GET /ready", h.readyCheck))
+	mux.HandleFunc("GET /metrics", h.correlate("GET /metrics", h.metrics))
 	return mux
 }
 
 // correlate ensures every response carries a correlation ID, generating one
 // if the caller didn't supply one, matching the header convention used
-// across the repo's HTTP surfaces (see menu-service Correlation.kt).
-func (h *Handlers) correlate(next http.HandlerFunc) http.HandlerFunc {
+// across the repo's HTTP surfaces (see menu-service's tracing-core Http.kt
+// plugin), and wraps the request in an http-entry span.
+func (h *Handlers) correlate(operation string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		correlationID := r.Header.Get(correlationIDHeader)
 		if correlationID == "" {
 			correlationID = newRequestID()
 		}
 		w.Header().Set(correlationIDHeader, correlationID)
-		next(w, r)
+
+		ctx := tracing.WithCorrelationID(r.Context(), correlationID)
+		_ = h.tracer.WithSpan(ctx, "http."+operation, func(ctx context.Context) error {
+			next(w, r.WithContext(ctx))
+			return nil
+		})
 	}
 }
 

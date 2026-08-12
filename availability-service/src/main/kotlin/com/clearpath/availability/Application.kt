@@ -6,6 +6,8 @@ import com.clearpath.availability.db.DatabaseFactory
 import com.clearpath.availability.idempotency.IdempotencyStore
 import com.clearpath.availability.routes.availabilityRoutes
 import com.clearpath.availability.state.RedisAvailabilityStore
+import com.clearpath.tracing.Tracer
+import com.clearpath.tracing.installTracing
 import com.mongodb.kotlin.client.coroutine.MongoClient
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -23,25 +25,27 @@ import redis.clients.jedis.JedisPool
 fun main() {
     val config = AppConfig()
     val db = DatabaseFactory.connect(config)
+    val tracer = Tracer("availability-service", config.kafkaBootstrapServers, config.systemTraceTopic)
 
     val jedisPool = JedisPool(config.redisHost, config.redisPort)
     val mongoClient = MongoClient.create(config.mongoUri)
     val mongoDatabase = mongoClient.getDatabase(config.mongoDatabase)
 
-    val redisStore = RedisAvailabilityStore(jedisPool)
+    val redisStore = RedisAvailabilityStore(jedisPool, tracer)
     val auditStore = MongoAuditStore(mongoDatabase)
-    val idempotencyStore = IdempotencyStore(db)
-    val consumer = MenuEventConsumer(config, idempotencyStore, redisStore, auditStore)
+    val idempotencyStore = IdempotencyStore(db, tracer)
+    val consumer = MenuEventConsumer(config, idempotencyStore, redisStore, auditStore, tracer)
 
     embeddedServer(Netty, port = config.httpPort) {
-        moduleWith(consumer, redisStore)
+        moduleWith(consumer, redisStore, tracer)
     }.start(wait = true)
 }
 
-fun Application.moduleWith(consumer: MenuEventConsumer, redisStore: RedisAvailabilityStore) {
+fun Application.moduleWith(consumer: MenuEventConsumer, redisStore: RedisAvailabilityStore, tracer: Tracer) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
     }
+    installTracing(tracer)
 
     consumer.start(this)
 

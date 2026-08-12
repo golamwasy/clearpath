@@ -37,9 +37,10 @@ type Config struct {
 
 	DBURL string
 
-	KafkaBrokers []string
-	SyncTopic    string
-	DLQTopic     string
+	KafkaBrokers     []string
+	SyncTopic        string
+	DLQTopic         string
+	SystemTraceTopic string
 
 	MaxConcurrency int
 	PollInterval   time.Duration
@@ -54,17 +55,18 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPPort:       getEnv("POS_HTTP_PORT", "8083"),
-		DBURL:          getEnv("POS_DB_URL", "postgres://pos_ingest:pos_ingest@localhost:5432/pos_ingest"),
-		KafkaBrokers:   strings.Split(getEnv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"), ","),
-		SyncTopic:      getEnv("POS_SYNC_TOPIC", "pos.sync"),
-		DLQTopic:       getEnv("POS_SYNC_DLQ_TOPIC", "pos.sync.dlq"),
-		MaxConcurrency: getEnvInt("POS_MAX_CONCURRENCY", 5),
-		PollInterval:   getEnvDuration("POS_POLL_INTERVAL", 30*time.Second),
-		MaxRetries:     getEnvInt("POS_MAX_RETRIES", 4),
-		RetryBaseDelay: getEnvDuration("POS_RETRY_BASE_DELAY", 200*time.Millisecond),
-		RetryMaxDelay:  getEnvDuration("POS_RETRY_MAX_DELAY", 10*time.Second),
-		HTTPTimeout:    getEnvDuration("POS_HTTP_TIMEOUT", 5*time.Second),
+		HTTPPort:         getEnv("POS_HTTP_PORT", "8083"),
+		DBURL:            getEnv("POS_DB_URL", "postgres://pos_ingest:pos_ingest@localhost:5432/pos_ingest"),
+		KafkaBrokers:     strings.Split(getEnv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"), ","),
+		SyncTopic:        getEnv("POS_SYNC_TOPIC", "pos.sync"),
+		DLQTopic:         getEnv("POS_SYNC_DLQ_TOPIC", "pos.sync.dlq"),
+		SystemTraceTopic: getEnv("SYSTEM_TRACE_TOPIC", "system.trace"),
+		MaxConcurrency:   getEnvInt("POS_MAX_CONCURRENCY", 5),
+		PollInterval:     getEnvDuration("POS_POLL_INTERVAL", 30*time.Second),
+		MaxRetries:       getEnvInt("POS_MAX_RETRIES", 4),
+		RetryBaseDelay:   getEnvDuration("POS_RETRY_BASE_DELAY", 200*time.Millisecond),
+		RetryMaxDelay:    getEnvDuration("POS_RETRY_MAX_DELAY", 10*time.Second),
+		HTTPTimeout:      getEnvDuration("POS_HTTP_TIMEOUT", 5*time.Second),
 	}
 
 	venuesPath := getEnv("POS_VENUES_CONFIG", "")

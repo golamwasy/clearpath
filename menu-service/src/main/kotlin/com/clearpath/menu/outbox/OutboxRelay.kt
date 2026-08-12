@@ -2,6 +2,8 @@ package com.clearpath.menu.outbox
 
 import com.clearpath.menu.AppConfig
 import com.clearpath.menu.db.Outbox
+import com.clearpath.tracing.TraceContext
+import com.clearpath.tracing.Tracer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -28,7 +30,7 @@ private data class OutboxRow(
     val correlationId: String,
 )
 
-class OutboxRelay(private val config: AppConfig, private val db: Database) {
+class OutboxRelay(private val config: AppConfig, private val db: Database, private val tracer: Tracer) {
 
     private val logger = LoggerFactory.getLogger(OutboxRelay::class.java)
 
@@ -58,7 +60,7 @@ class OutboxRelay(private val config: AppConfig, private val db: Database) {
     }
 
     /** Reads a batch of unpublished rows, publishes each to Kafka, and marks it published only after broker ack. */
-    fun pollAndPublishOnce(): Int {
+    suspend fun pollAndPublishOnce(): Int {
         val rows = transaction(db) {
             Outbox.selectAll()
                 .where { Outbox.publishedAt.isNull() }
@@ -81,18 +83,23 @@ class OutboxRelay(private val config: AppConfig, private val db: Database) {
             val payload = row.payload
             val correlationId = row.correlationId
 
-            val record = ProducerRecord(config.menuEventsTopic, aggregateId.toString(), payload)
-            record.headers().add(RecordHeader("correlationId", correlationId.toByteArray()))
+            // The outbox table only persists correlationId, not the request's spanId, so the
+            // relay hop's parent is unrecoverable — its span is emitted with root=true even
+            // though it isn't the trace's true origin.
+            tracer.withSpan(TraceContext.root(correlationId), "kafka.publish ${config.menuEventsTopic}") {
+                val record = ProducerRecord(config.menuEventsTopic, aggregateId.toString(), payload)
+                record.headers().add(RecordHeader("correlationId", correlationId.toByteArray()))
 
-            val ackedOffset = producer.send(record).get()
+                val ackedOffset = producer.send(record).get()
 
-            transaction(db) {
-                Outbox.update({ Outbox.id eq id }) {
-                    it[publishedAt] = Instant.now()
+                transaction(db) {
+                    Outbox.update({ Outbox.id eq id }) {
+                        it[publishedAt] = Instant.now()
+                    }
                 }
+                logger.info("published outbox row id=$id offset=${ackedOffset.offset()}")
             }
             publishedCount++
-            logger.info("published outbox row id=$id offset=${ackedOffset.offset()}")
         }
         return publishedCount
     }

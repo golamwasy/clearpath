@@ -73,6 +73,7 @@ services:
       MENU_DB_PASSWORD: menu
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       MENU_EVENTS_TOPIC: menu.events
+      SYSTEM_TRACE_TOPIC: system.trace
       MENU_HTTP_PORT: "8081"
 
   availability-service:
@@ -96,12 +97,32 @@ services:
       AVAILABILITY_DB_PASSWORD: availability
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       MENU_EVENTS_TOPIC: menu.events
+      SYSTEM_TRACE_TOPIC: system.trace
       AVAILABILITY_CONSUMER_GROUP: availability-service
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       MONGO_URI: mongodb://mongo:27017
       MONGO_DATABASE: availability
       AVAILABILITY_HTTP_PORT: "8082"
+
+  trace-collector:
+    build:
+      context: .
+      dockerfile: trace-collector/Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SYSTEM_TRACE_TOPIC: system.trace
+      TRACE_COLLECTOR_CONSUMER_GROUP: trace-collector
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DATABASE: tracing
+      TRACE_COLLECTOR_HTTP_PORT: "8084"
 
   nested-pos:
     build:
@@ -145,6 +166,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       POS_SYNC_TOPIC: pos.sync
       POS_SYNC_DLQ_TOPIC: pos.sync.dlq
+      SYSTEM_TRACE_TOPIC: system.trace
       POS_HTTP_PORT: "8083"
       POS_MAX_CONCURRENCY: "5"
       POS_POLL_INTERVAL: 30s

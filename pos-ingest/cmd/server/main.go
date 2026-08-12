@@ -16,6 +16,7 @@ import (
 	"github.com/clearpath/pos-ingest/internal/provider"
 	"github.com/clearpath/pos-ingest/internal/ratelimit"
 	"github.com/clearpath/pos-ingest/internal/store"
+	"github.com/clearpath/pos-ingest/internal/tracing"
 	"github.com/clearpath/pos-ingest/internal/worker"
 )
 
@@ -31,14 +32,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	st, err := store.New(ctx, cfg.DBURL)
+	tracer := tracing.NewTracer("pos-ingest", cfg.KafkaBrokers, cfg.SystemTraceTopic, logger)
+	defer tracer.Close()
+
+	st, err := store.New(ctx, cfg.DBURL, tracer)
 	if err != nil {
 		logger.Error("failed to connect to postgres", "error", err)
 		os.Exit(1)
 	}
 	defer st.Close()
 
-	producer := kafka.NewProducer(cfg.KafkaBrokers, cfg.SyncTopic, cfg.DLQTopic)
+	producer := kafka.NewProducer(cfg.KafkaBrokers, cfg.SyncTopic, cfg.DLQTopic, tracer)
 	defer producer.Close()
 
 	providers, err := buildProviders(cfg)
@@ -60,7 +64,7 @@ func main() {
 	)
 	go pool.Run(ctx, cfg.PollInterval)
 
-	handlers := api.NewHandlers(st, st, logger)
+	handlers := api.NewHandlers(st, st, logger, tracer)
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
 		Handler: handlers.Routes(),

@@ -56,7 +56,7 @@ If you make a new structural decision, write a new ADR.
 
 ## Current state
 
-Phase: 2 (POS ingestion)
+Phase: 3 (distributed tracing)
 
 Working:
 - menu-service: Postgres schema (venues, categories, items, modifiers,
@@ -100,21 +100,72 @@ Working:
   Redis, asserted within a timeout. Passing. (pos-ingest has no
   Testcontainers integration test yet — only table-driven unit tests plus
   the manual docker-compose verification above.)
+- `tracing-core` (Kotlin library, `menu-service`/`availability-service`/
+  `trace-collector` depend on it): `Tracer.withSpan` records start/end time,
+  service name, operation, and the ambient correlation ID, then publishes a
+  `Span` to `system.trace` fire-and-forget (async Kafka send, publish
+  failures logged not thrown). `TraceContext` is passed explicitly through
+  call sites rather than carried on a ThreadLocal/MDC, since spans must nest
+  correctly across Ktor's Netty dispatcher and Exposed's blocking JDBC calls
+  on `Dispatchers.IO`. `installTracing` wraps every HTTP request in a root
+  span (extracting `X-Correlation-Id` or generating one) via
+  `ApplicationCallPipeline.Monitoring` interception, replacing the old
+  standalone `CorrelationIdPlugin`.
+- `pos-ingest/internal/tracing` (Go): same wire format, propagated via
+  `context.Context` instead of an explicit parameter, since `context.Context`
+  is already the idiomatic ambient mechanism used throughout `pos-ingest`.
+- Instrumented boundaries, existing code only (HTTP entry, DB commit, Kafka
+  publish, Kafka consume, Redis write — wherever each actually exists):
+  menu-service (`itemRoutes` HTTP entry, `ItemRepository`'s transactions,
+  `OutboxRelay`'s Kafka publish per outbox row), availability-service
+  (`availabilityRoutes` HTTP entry, `MenuEventConsumer`'s Kafka consume,
+  `IdempotencyStore`'s transaction, `RedisAvailabilityStore.put`), pos-ingest
+  (`api/handlers.go` routes, `store.StartRun`/`FinishRun`,
+  `kafka.Producer.PublishSync`/`PublishDLQ`). `MongoAuditStore.append` is
+  deliberately not instrumented — not one of the five boundary types.
+  Outbox-relay and menu-event-consumer spans are emitted with `root=true`
+  even though they aren't the trace's true origin, because `menu.events`/the
+  outbox table carry a correlation ID but no span ID to propagate as a real
+  parent (documented in ADR 0003).
+- `trace-collector` (Kotlin/Ktor, new service, port 8084): consumes
+  `system.trace` into a Mongo `spans` collection (not idempotent/dedup'd —
+  deliberate, since spans are diagnostic, not correctness-sensitive; see ADR
+  0003), fans out each consumed span to any connected SSE client via an
+  in-memory `SharedFlow` (`SpanBroadcaster`). `GET /traces/{correlationId}`
+  returns the full span list sorted by start time. `GET /traces/stream` is a
+  manually-implemented SSE endpoint (`respondTextWriter` + `text/event-stream`
+  — Ktor 2.3.12 predates the `ktor-server-sse` plugin). `GET /traces` lists
+  recent traces via a Mongo aggregation grouping by correlation ID
+  (start/end/span count/error status).
+- Verified end-to-end manually via docker-compose: creating a venue + item
+  through menu-service produces one correlation ID's worth of spans visible
+  live on `GET /traces/stream` and via `GET /traces/{correlationId}`,
+  spanning menu-service's HTTP entry, DB commit, and Kafka publish through
+  to availability-service's Kafka consume, DB commit, and Redis write.
 - ADRs: `docs/adr/0001-transactional-outbox.md`,
-  `docs/adr/0002-redis-mongo-split.md`.
+  `docs/adr/0002-redis-mongo-split.md`,
+  `docs/adr/0003-tracing-wire-format.md` (bespoke JSON-over-Kafka wire
+  format instead of adopting OpenTelemetry — reasoning and consequences in
+  the ADR).
 
 Not built yet:
 - storefront-api
-- trace-collector / system.trace / correlation ID propagation across Kafka
-  headers beyond menu.events and pos.sync (correlation ID does propagate
-  over HTTP, into the outbox->Kafka hop, and into pos-ingest's Kafka
-  publishes as headers, but there's no collector consuming it yet)
-- merchant-web frontend
+- merchant-web frontend (no UI was built this phase, per instructions —
+  `trace-collector`'s REST/SSE API is the surface a future frontend phase
+  would read)
 - stock.events topic and its consumers; no consumer exists for `pos.sync`
-  either (menu-service and availability-service are unchanged this phase)
-- /metrics on all three services is a stub (returns a placeholder, not real
-  Prometheus output)
+  either
+- /metrics on all four services (now including trace-collector) is a stub
+  (returns a placeholder, not real Prometheus output)
 - outbox table retention/cleanup job
+- No sampling on `system.trace` — every instrumented call emits a span
+  unconditionally, and `trace-collector`'s span consumer isn't dedupe'd
+  (both deliberate at current scale, per ADR 0003, not oversights)
+- No unit tests for `tracing-core` or `pos-ingest/internal/tracing` yet —
+  verified this phase via the existing Testcontainers integration test
+  (unchanged assertions, updated only for the new `Tracer` constructor
+  params) plus manual docker-compose/SSE verification; no dedicated tracing
+  test coverage was added
 - Redis `KEYS`-based venue listing in availability-service should become a
   maintained set or `SCAN` before production traffic (noted in ADR 0002)
 - pos-ingest venue-to-provider config is a static JSON file
