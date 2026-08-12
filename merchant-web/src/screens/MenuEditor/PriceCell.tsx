@@ -39,9 +39,12 @@ export function PriceCell({ itemName, priceCents, onCommit, disabled }: PriceCel
         type="button"
         onClick={beginEdit}
         disabled={disabled}
-        className="rounded px-2 py-1 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+        className="group inline-flex items-center gap-1.5 rounded-md border border-dashed border-slate-300 px-2.5 py-1 text-left font-medium text-slate-900 hover:border-solid hover:border-blue-400 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-dashed disabled:hover:border-slate-300 disabled:hover:bg-transparent"
       >
         {formatCents(priceCents)}
+        <span aria-hidden="true" className="text-xs text-slate-400 group-hover:text-blue-500">
+          ✎
+        </span>
       </button>
     );
   }

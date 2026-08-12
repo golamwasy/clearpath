@@ -2,6 +2,7 @@ import { useId, useRef, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { Input } from "../../components/ui/Input";
+import { Popover } from "../../components/ui/Popover";
 import { formatDateTime } from "../../lib/format";
 import type { AvailabilityState, AvailabilityStatus } from "../../api/queries/availability";
 
@@ -43,41 +44,52 @@ export function AvailabilityCell({ itemLabel, state, onChange, disabled }: Avail
         aria-controls={popoverId}
         onClick={() => setOpen((o) => !o)}
         disabled={disabled}
-        className="rounded px-1 py-1 disabled:cursor-not-allowed disabled:opacity-50"
+        className="group inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white py-1 pl-2 pr-1.5 shadow-sm hover:border-slate-400 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-300 disabled:hover:bg-white"
       >
         <StatusBadge status={status} soldOutUntil={state?.soldOutUntil} />
+        <span aria-hidden="true" className="text-slate-400 group-hover:text-slate-600">
+          ▾
+        </span>
       </button>
-      {open && (
-        <div
-          id={popoverId}
-          role="dialog"
-          aria-label={`Set availability for ${itemLabel}`}
-          className="absolute z-10 mt-1 w-56 rounded-md border border-slate-200 bg-white p-3 shadow-lg"
-        >
-          <div className="flex flex-col gap-2">
-            <Button variant="secondary" onClick={() => apply("in_stock")}>
-              In stock
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={triggerRef}
+        id={popoverId}
+        label={`Set availability for ${itemLabel}`}
+      >
+        <div className="flex flex-col gap-2">
+          <Button
+            variant={status === "in_stock" ? "primary" : "secondary"}
+            onClick={() => apply("in_stock")}
+            className="justify-start"
+          >
+            In stock
+          </Button>
+          <Button
+            variant={status === "sold_out" ? "primary" : "secondary"}
+            onClick={() => apply("sold_out")}
+            className="justify-start"
+          >
+            Sold out
+          </Button>
+          <div className="flex flex-col gap-1.5 border-t border-slate-100 pt-3">
+            <label htmlFor={untilInputId} className="text-xs font-medium text-slate-600">
+              Sold out until
+            </label>
+            <Input
+              id={untilInputId}
+              type="datetime-local"
+              value={untilDraft}
+              onChange={(e) => setUntilDraft(e.target.value)}
+              className="w-full"
+            />
+            <Button variant="primary" onClick={() => apply("sold_out_until")} disabled={!untilDraft}>
+              Set
             </Button>
-            <Button variant="secondary" onClick={() => apply("sold_out")}>
-              Sold out
-            </Button>
-            <div className="flex flex-col gap-1 border-t border-slate-100 pt-2">
-              <label htmlFor={untilInputId} className="text-xs font-medium text-slate-600">
-                Sold out until
-              </label>
-              <Input
-                id={untilInputId}
-                type="datetime-local"
-                value={untilDraft}
-                onChange={(e) => setUntilDraft(e.target.value)}
-              />
-              <Button variant="primary" onClick={() => apply("sold_out_until")} disabled={!untilDraft}>
-                Set
-              </Button>
-            </div>
           </div>
         </div>
-      )}
+      </Popover>
     </div>
   );
 }

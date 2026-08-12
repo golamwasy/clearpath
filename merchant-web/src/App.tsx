@@ -14,9 +14,9 @@ function navClass({ isActive }: { isActive: boolean }) {
 export default function App() {
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
-        <nav className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-3" aria-label="Main">
-          <span className="mr-4 text-sm font-semibold text-slate-900">Merchant Platform</span>
+      <header className="border-b border-slate-200 bg-white shadow-sm">
+        <nav className="mx-auto flex max-w-5xl items-center gap-1 px-6 py-4" aria-label="Main">
+          <span className="mr-6 text-sm font-semibold tracking-tight text-slate-900">Merchant Platform</span>
           <NavLink to={`/venues/${DEFAULT_VENUE_ID}/menu`} className={navClass}>
             Menu
           </NavLink>
@@ -28,7 +28,7 @@ export default function App() {
           </NavLink>
         </nav>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6">
+      <main className="mx-auto max-w-5xl px-6 py-8">
         <Routes>
           <Route path="/" element={<Navigate to="/sync" replace />} />
           <Route path="/venues/:venueId/menu" element={<MenuEditor />} />

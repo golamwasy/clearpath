@@ -1,5 +1,6 @@
 import { useParams } from "react-router-dom";
 import { Table, THead, TBody, Th, Td } from "../../components/ui/Table";
+import { PageHeader } from "../../components/ui/PageHeader";
 import { InlineError } from "../../components/ui/InlineError";
 import { Spinner } from "../../components/ui/Spinner";
 import { AvailabilityCell } from "./AvailabilityCell";
@@ -36,8 +37,11 @@ export function AvailabilityBoard() {
   const itemIds = new Set<string>([...itemNames.keys(), ...stateByItem.keys()]);
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold text-slate-900">Availability</h1>
+    <div className="space-y-6">
+      <PageHeader
+        title="Availability"
+        subtitle={`${itemIds.size} ${itemIds.size === 1 ? "item" : "items"} · click a status to change it`}
+      />
       <Table>
         <THead>
           <tr>
@@ -50,7 +54,7 @@ export function AvailabilityBoard() {
             const label = itemNames.get(itemId) ?? itemId;
             return (
               <tr key={itemId} className="hover:bg-slate-50">
-                <Td>{label}</Td>
+                <Td className="font-medium text-slate-900">{label}</Td>
                 <Td>
                   <AvailabilityCell
                     itemLabel={label}

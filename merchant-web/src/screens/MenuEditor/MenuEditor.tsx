@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Table, THead, TBody, Th } from "../../components/ui/Table";
+import { PageHeader } from "../../components/ui/PageHeader";
 import { InlineError } from "../../components/ui/InlineError";
 import { Spinner } from "../../components/ui/Spinner";
 import { ItemRow } from "./ItemRow";
@@ -89,8 +90,16 @@ export function MenuEditor() {
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold text-slate-900">Menu</h1>
+    <div className="space-y-6">
+      <PageHeader
+        title="Menu"
+        subtitle={
+          <>
+            {sorted.length} {sorted.length === 1 ? "item" : "items"} · click a price to edit, use the
+            arrows to reorder
+          </>
+        }
+      />
       <Table>
         <THead>
           <tr>

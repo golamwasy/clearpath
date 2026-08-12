@@ -74,16 +74,16 @@ export function useReorderItems(venueId: string) {
 
   return useMutation({
     mutationFn: async (reordered: ItemResponse[]) => {
-      const previous = snapshotItems(queryClient, venueId) ?? [];
-      const changed = reordered.filter((item, index) => {
-        const before = previous.find((p) => p.id === item.id);
-        return before && before.sortOrder !== index;
-      });
+      // Each item still carries its pre-move sortOrder (move() reorders positions,
+      // not the item objects themselves), so diffing against the new index doesn't
+      // need a cache snapshot - which is good, because onMutate below has already
+      // overwritten the cache with the new order by the time this runs, so reading
+      // it back here would show everything as "unchanged."
+      const changed = reordered.filter((item, index) => item.sortOrder !== index);
 
       const results = await Promise.all(
-        changed.map((item, changedIndex) => {
+        changed.map((item) => {
           const index = reordered.findIndex((i) => i.id === item.id);
-          void changedIndex;
           return apiRequest<ItemResponse>("menu", `/venues/${venueId}/items/${item.id}`, {
             method: "PUT",
             body: {

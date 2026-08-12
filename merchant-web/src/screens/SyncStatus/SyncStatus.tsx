@@ -1,4 +1,5 @@
 import { Table, THead, TBody, Th, Td } from "../../components/ui/Table";
+import { PageHeader } from "../../components/ui/PageHeader";
 import { Badge } from "../../components/ui/Badge";
 import { InlineError } from "../../components/ui/InlineError";
 import { Spinner } from "../../components/ui/Spinner";
@@ -17,8 +18,11 @@ export function SyncStatus() {
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold text-slate-900">Sync status</h1>
+    <div className="space-y-6">
+      <PageHeader
+        title="Sync status"
+        subtitle={`${(runs ?? []).length} recent ${(runs ?? []).length === 1 ? "run" : "runs"} from pos-ingest`}
+      />
       <Table>
         <THead>
           <tr>
@@ -35,15 +39,17 @@ export function SyncStatus() {
         <TBody>
           {(runs ?? []).map((run) => (
             <tr key={run.ID} className="hover:bg-slate-50">
-              <Td>{run.VenueID}</Td>
+              <Td className="font-medium text-slate-900">{run.VenueID}</Td>
               <Td>{run.Provider}</Td>
               <Td>
                 <StatusBadge status={run.Status} />
               </Td>
               <Td>{run.ItemsChanged}</Td>
-              <Td>{formatDateTime(run.StartedAt)}</Td>
-              <Td>{formatDateTime(run.FinishedAt)}</Td>
-              <Td className="max-w-xs truncate text-red-700">{run.Error ?? "—"}</Td>
+              <Td className="whitespace-nowrap text-slate-500">{formatDateTime(run.StartedAt)}</Td>
+              <Td className="whitespace-nowrap text-slate-500">{formatDateTime(run.FinishedAt)}</Td>
+              <Td className="max-w-xs truncate text-red-700" title={run.Error ?? undefined}>
+                {run.Error ?? "—"}
+              </Td>
               <Td>
                 <RetryButton runId={run.ID} />
               </Td>
