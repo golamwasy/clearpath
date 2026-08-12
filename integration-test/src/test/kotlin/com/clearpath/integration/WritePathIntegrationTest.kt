@@ -103,7 +103,7 @@ class WritePathIntegrationTest {
             val consumer = MenuEventConsumer(availabilityConfig, idempotencyStore, redisStore, auditStore, availabilityTracer)
 
             availabilityServer = embeddedServer(Netty, port = availabilityConfig.httpPort) {
-                availabilityModule(consumer, redisStore, availabilityTracer)
+                availabilityModule(consumer, redisStore, auditStore, availabilityTracer)
             }.start(wait = false)
         }
 
@@ -158,6 +158,6 @@ class WritePathIntegrationTest {
         val availabilityJson = json.parseToJsonElement(found!!).jsonObject
         assertEquals(venueId, availabilityJson["venueId"]!!.jsonPrimitive.content)
         assertEquals(itemId, availabilityJson["itemId"]!!.jsonPrimitive.content)
-        assertEquals(true, availabilityJson["available"]!!.jsonPrimitive.boolean, "expected item to be available")
+        assertEquals("in_stock", availabilityJson["status"]!!.jsonPrimitive.content, "expected item to be in stock")
     }
 }

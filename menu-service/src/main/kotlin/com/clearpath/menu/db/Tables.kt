@@ -25,6 +25,8 @@ object Items : Table("items") {
     val categoryId = uuid("category_id").references(Categories.id).nullable()
     val name = text("name")
     val description = text("description").nullable()
+    val priceCents = long("price_cents").nullable()
+    val sortOrder = integer("sort_order")
     val version = integer("version")
     val deletedAt = timestamp("deleted_at").nullable()
     val createdAt = timestamp("created_at")

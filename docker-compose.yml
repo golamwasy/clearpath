@@ -75,6 +75,7 @@ services:
       MENU_EVENTS_TOPIC: menu.events
       SYSTEM_TRACE_TOPIC: system.trace
       MENU_HTTP_PORT: "8081"
+      CORS_ALLOWED_ORIGIN_HOST: "localhost:5173"
 
   availability-service:
     build:
@@ -104,6 +105,7 @@ services:
       MONGO_URI: mongodb://mongo:27017
       MONGO_DATABASE: availability
       AVAILABILITY_HTTP_PORT: "8082"
+      CORS_ALLOWED_ORIGIN_HOST: "localhost:5173"
 
   trace-collector:
     build:
@@ -168,6 +170,7 @@ services:
       POS_SYNC_DLQ_TOPIC: pos.sync.dlq
       SYSTEM_TRACE_TOPIC: system.trace
       POS_HTTP_PORT: "8083"
+      CORS_ALLOWED_ORIGIN: "http://localhost:5173"
       POS_MAX_CONCURRENCY: "5"
       POS_POLL_INTERVAL: 30s
       POS_MAX_RETRIES: "4"

@@ -6,6 +6,8 @@ import com.clearpath.menu.repository.ItemRepository
 import com.clearpath.menu.routes.itemRoutes
 import com.clearpath.tracing.Tracer
 import com.clearpath.tracing.installTracing
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
@@ -13,6 +15,7 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.application.call
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -33,6 +36,21 @@ fun main() {
 fun Application.moduleWith(db: org.jetbrains.exposed.sql.Database, relay: OutboxRelay, tracer: Tracer) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
+    }
+    // merchant-web (a browser app on its own origin, e.g. the Vite dev server) calls this
+    // service directly - there's no gateway/reverse-proxy in front of it - so it needs an
+    // explicit CORS policy or every cross-origin fetch is blocked before it reaches routing.
+    install(CORS) {
+        allowHost(
+            System.getenv("CORS_ALLOWED_ORIGIN_HOST") ?: "localhost:5173",
+            schemes = listOf("http", "https"),
+        )
+        allowMethod(HttpMethod.Get)
+        allowMethod(HttpMethod.Post)
+        allowMethod(HttpMethod.Put)
+        allowMethod(HttpMethod.Delete)
+        allowHeader(HttpHeaders.ContentType)
+        allowHeader("X-Correlation-Id")
     }
     installTracing(tracer)
 

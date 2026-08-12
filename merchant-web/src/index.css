@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Keep focus rings visible everywhere — accessibility requirement, do not suppress. */
+:focus-visible {
+  outline: 2px solid theme("colors.blue.600");
+  outline-offset: 2px;
+}

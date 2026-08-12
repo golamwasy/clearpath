@@ -24,7 +24,7 @@ import java.util.UUID
 sealed class ItemWriteResult {
     data class Success(val item: ItemResponse) : ItemWriteResult()
     object NotFound : ItemWriteResult()
-    object VersionConflict : ItemWriteResult()
+    data class VersionConflict(val current: ItemResponse?) : ItemWriteResult()
 }
 
 class ItemRepository(private val db: Database, private val tracer: Tracer) {
@@ -47,6 +47,8 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                     it[categoryId] = categoryUuid
                     it[name] = request.name
                     it[description] = request.description
+                    it[priceCents] = request.priceCents
+                    it[sortOrder] = request.sortOrder
                     it[version] = 0
                     it[createdAt] = now
                     it[updatedAt] = now
@@ -67,6 +69,8 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                         categoryId = categoryUuid?.toString(),
                         name = request.name,
                         description = request.description,
+                        priceCents = request.priceCents,
+                        sortOrder = request.sortOrder,
                         version = 0,
                         createdAt = now.toString(),
                         updatedAt = now.toString(),
@@ -94,11 +98,13 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                     it[name] = request.name
                     it[description] = request.description
                     it[categoryId] = categoryUuid
+                    it[priceCents] = request.priceCents
+                    it[sortOrder] = request.sortOrder
                     it[version] = newVersion
                     it[updatedAt] = now
                 }
 
-                if (updatedRows == 0) return@transaction ItemWriteResult.VersionConflict
+                if (updatedRows == 0) return@transaction ItemWriteResult.VersionConflict(currentItemResponse(itemId, venueId))
 
                 writeOutboxEvent(
                     aggregateId = itemId,
@@ -115,6 +121,8 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                         categoryId = categoryUuid?.toString(),
                         name = request.name,
                         description = request.description,
+                        priceCents = request.priceCents,
+                        sortOrder = request.sortOrder,
                         version = newVersion,
                         createdAt = existing[Items.createdAt].toString(),
                         updatedAt = now.toString(),
@@ -142,7 +150,7 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                     it[updatedAt] = now
                 }
 
-                if (updatedRows == 0) return@transaction ItemWriteResult.VersionConflict
+                if (updatedRows == 0) return@transaction ItemWriteResult.VersionConflict(currentItemResponse(itemId, venueId))
 
                 writeOutboxEvent(
                     aggregateId = itemId,
@@ -159,6 +167,8 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                         categoryId = existing[Items.categoryId]?.toString(),
                         name = existing[Items.name],
                         description = existing[Items.description],
+                        priceCents = existing[Items.priceCents],
+                        sortOrder = existing[Items.sortOrder],
                         version = newVersion,
                         createdAt = existing[Items.createdAt].toString(),
                         updatedAt = now.toString(),
@@ -177,12 +187,35 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                     categoryId = it[Items.categoryId]?.toString(),
                     name = it[Items.name],
                     description = it[Items.description],
+                    priceCents = it[Items.priceCents],
+                    sortOrder = it[Items.sortOrder],
                     version = it[Items.version],
                     createdAt = it[Items.createdAt].toString(),
                     updatedAt = it[Items.updatedAt].toString(),
                 )
             }
     }
+
+    /** Re-selects an item's current row, for attaching to a 409 conflict response. Called inside the same transaction as the failed conditional write, so it reflects the actual winning writer, not a stale read. */
+    private fun currentItemResponse(itemId: UUID, venueId: UUID): ItemResponse? =
+        Items.selectAll()
+            .where { (Items.id eq itemId) and (Items.venueId eq venueId) }
+            .limit(1)
+            .firstOrNull()
+            ?.let {
+                ItemResponse(
+                    id = it[Items.id].toString(),
+                    venueId = it[Items.venueId].toString(),
+                    categoryId = it[Items.categoryId]?.toString(),
+                    name = it[Items.name],
+                    description = it[Items.description],
+                    priceCents = it[Items.priceCents],
+                    sortOrder = it[Items.sortOrder],
+                    version = it[Items.version],
+                    createdAt = it[Items.createdAt].toString(),
+                    updatedAt = it[Items.updatedAt].toString(),
+                )
+            }
 
     fun createVenue(name: String): String = transaction(db) {
         val id = UUID.randomUUID()

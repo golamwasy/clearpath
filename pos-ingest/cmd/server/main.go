@@ -64,7 +64,7 @@ func main() {
 	)
 	go pool.Run(ctx, cfg.PollInterval)
 
-	handlers := api.NewHandlers(st, st, logger, tracer)
+	handlers := api.NewHandlers(st, pool, st, logger, tracer)
 	httpServer := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
 		Handler: handlers.Routes(),

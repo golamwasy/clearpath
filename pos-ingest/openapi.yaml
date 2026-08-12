@@ -1,0 +1,101 @@
+openapi: 3.0.3
+info:
+  title: pos-ingest
+  description: POS provider polling, normalization, and sync run history.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8083
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: OK
+  /ready:
+    get:
+      operationId: ready
+      responses:
+        "200":
+          description: OK
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /sync-runs:
+    get:
+      operationId: listSyncRuns
+      parameters:
+        - name: venue
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by venue ID. Omit for all venues.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Most recent sync runs, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SyncRun" }
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /sync-runs/{id}/retry:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: retrySyncRun
+      description: >
+        Re-polls the run's venue synchronously through the same poll path the
+        ticker uses, and returns the newly finished run. Not the run's own
+        fetch-level retry (that's internal/retry, already exhausted by the
+        time a run shows up here) — this is an operator-triggered re-run.
+      responses:
+        "202":
+          description: New sync run finished (success or failure — check status)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncRun" }
+        "404":
+          description: No sync run with that ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "502":
+          description: The run's venue is no longer configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+components:
+  schemas:
+    SyncRun:
+      type: object
+      required: [ID, VenueID, Provider, StartedAt, ItemsChanged, Status, CorrelationID]
+      description: Field names are PascalCase — this struct has no json tags, unlike every other wire type in pos-ingest.
+      properties:
+        ID: { type: string, format: uuid }
+        VenueID: { type: string }
+        Provider: { type: string }
+        StartedAt: { type: string, format: date-time }
+        FinishedAt: { type: string, format: date-time, nullable: true }
+        ItemsChanged: { type: integer }
+        Status: { type: string, enum: [running, success, failed] }
+        Error: { type: string, nullable: true }
+        CorrelationID: { type: string }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }

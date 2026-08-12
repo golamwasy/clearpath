@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -88,16 +89,43 @@ func (p *Pool) pollAll(ctx context.Context) {
 		}
 		go func() {
 			defer func() { <-p.sem }()
-			p.pollVenue(ctx, venue)
+			_, _ = p.pollVenue(ctx, venue)
 		}()
 	}
 }
 
-func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) {
+// PollVenueNow triggers an out-of-band poll of a single venue, bounded by the same
+// concurrency semaphore as the ticker-driven polls, and returns the finished run —
+// used by the operator-triggered "retry" endpoint (POST /sync-runs/{id}/retry).
+func (p *Pool) PollVenueNow(ctx context.Context, venueID string) (model.SyncRun, error) {
+	var venue config.VenueConfig
+	found := false
+	for _, v := range p.venues {
+		if v.VenueID == venueID {
+			venue = v
+			found = true
+			break
+		}
+	}
+	if !found {
+		return model.SyncRun{}, fmt.Errorf("venue %q is not configured", venueID)
+	}
+
+	select {
+	case p.sem <- struct{}{}:
+	case <-ctx.Done():
+		return model.SyncRun{}, ctx.Err()
+	}
+	defer func() { <-p.sem }()
+
+	return p.pollVenue(ctx, venue)
+}
+
+func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) (model.SyncRun, error) {
 	prov, ok := p.providers[venue.Provider]
 	if !ok {
 		p.logger.Error("unknown provider for venue", "venue", venue.VenueID, "provider", venue.Provider)
-		return
+		return model.SyncRun{}, fmt.Errorf("unknown provider %q for venue %q", venue.Provider, venue.VenueID)
 	}
 
 	correlationID := newCorrelationID()
@@ -107,7 +135,7 @@ func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) {
 	run, err := p.store.StartRun(ctx, venue.VenueID, venue.Provider, correlationID)
 	if err != nil {
 		logger.Error("failed to record sync run start", "error", err)
-		return
+		return model.SyncRun{}, err
 	}
 
 	items, err := retry.Do(ctx, retry.Config{
@@ -121,8 +149,7 @@ func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) {
 
 	if err != nil {
 		logger.Warn("sync run failed after retries", "error", err)
-		p.handleFailure(ctx, run, venue, correlationID, err, logger)
-		return
+		return p.handleFailure(ctx, run, venue, correlationID, err, logger), nil
 	}
 
 	envelope := model.SyncEnvelope{
@@ -132,21 +159,30 @@ func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) {
 		SyncedAt:      time.Now().UTC(),
 		Items:         model.ItemsToSynced(items),
 	}
+	finishedAt := time.Now().UTC()
 	if err := p.producer.PublishSync(ctx, envelope); err != nil {
 		logger.Error("failed to publish pos.sync", "error", err)
 		if fErr := p.store.FinishRun(ctx, run.ID, model.SyncStatusFailed, 0, err); fErr != nil {
 			logger.Error("failed to record sync run failure", "error", fErr)
 		}
-		return
+		errText := err.Error()
+		run.Status = model.SyncStatusFailed
+		run.FinishedAt = &finishedAt
+		run.Error = &errText
+		return run, nil
 	}
 
 	if err := p.store.FinishRun(ctx, run.ID, model.SyncStatusSuccess, len(items), nil); err != nil {
 		logger.Error("failed to record sync run success", "error", err)
 	}
 	logger.Info("sync run succeeded", "itemsChanged", len(items))
+	run.Status = model.SyncStatusSuccess
+	run.FinishedAt = &finishedAt
+	run.ItemsChanged = len(items)
+	return run, nil
 }
 
-func (p *Pool) handleFailure(ctx context.Context, run model.SyncRun, venue config.VenueConfig, correlationID string, syncErr error, logger *slog.Logger) {
+func (p *Pool) handleFailure(ctx context.Context, run model.SyncRun, venue config.VenueConfig, correlationID string, syncErr error, logger *slog.Logger) model.SyncRun {
 	attempts := p.maxRetries
 	dlqEnvelope := model.DLQEnvelope{
 		VenueID:       venue.VenueID,
@@ -162,6 +198,12 @@ func (p *Pool) handleFailure(ctx context.Context, run model.SyncRun, venue confi
 	if err := p.store.FinishRun(ctx, run.ID, model.SyncStatusFailed, 0, syncErr); err != nil {
 		logger.Error("failed to record sync run failure", "error", err)
 	}
+	finishedAt := time.Now().UTC()
+	errText := syncErr.Error()
+	run.Status = model.SyncStatusFailed
+	run.FinishedAt = &finishedAt
+	run.Error = &errText
+	return run
 }
 
 func newCorrelationID() string {

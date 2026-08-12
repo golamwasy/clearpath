@@ -5,9 +5,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/clearpath/pos-ingest/internal/model"
 	"github.com/clearpath/pos-ingest/internal/tracing"
@@ -17,6 +21,11 @@ const correlationIDHeader = "X-Correlation-Id"
 
 type SyncRunLister interface {
 	RecentRuns(ctx context.Context, venueID string, limit int) ([]model.SyncRun, error)
+	GetRun(ctx context.Context, id string) (model.SyncRun, error)
+}
+
+type VenueRetrier interface {
+	PollVenueNow(ctx context.Context, venueID string) (model.SyncRun, error)
 }
 
 type Pinger interface {
@@ -24,23 +33,45 @@ type Pinger interface {
 }
 
 type Handlers struct {
-	store  SyncRunLister
-	ready  Pinger
-	logger *slog.Logger
-	tracer *tracing.Tracer
+	store   SyncRunLister
+	retrier VenueRetrier
+	ready   Pinger
+	logger  *slog.Logger
+	tracer  *tracing.Tracer
 }
 
-func NewHandlers(store SyncRunLister, ready Pinger, logger *slog.Logger, tracer *tracing.Tracer) *Handlers {
-	return &Handlers{store: store, ready: ready, logger: logger, tracer: tracer}
+func NewHandlers(store SyncRunLister, retrier VenueRetrier, ready Pinger, logger *slog.Logger, tracer *tracing.Tracer) *Handlers {
+	return &Handlers{store: store, retrier: retrier, ready: ready, logger: logger, tracer: tracer}
 }
 
-func (h *Handlers) Routes() *http.ServeMux {
+func (h *Handlers) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sync-runs", h.correlate("GET /sync-runs", h.listSyncRuns))
+	mux.HandleFunc("POST /sync-runs/{id}/retry", h.correlate("POST /sync-runs/{id}/retry", h.retrySyncRun))
 	mux.HandleFunc("GET /health", h.correlate("GET /health", h.health))
 	mux.HandleFunc("GET /ready", h.correlate("GET /ready", h.readyCheck))
 	mux.HandleFunc("GET /metrics", h.correlate("GET /metrics", h.metrics))
-	return mux
+	return withCORS(mux)
+}
+
+// withCORS lets merchant-web (a browser app on its own origin, e.g. the Vite dev server)
+// call this service directly - there's no gateway in front of it - so without this every
+// cross-origin fetch is blocked by the browser before it reaches the mux.
+func withCORS(next http.Handler) http.Handler {
+	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:5173"
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Correlation-Id")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // correlate ensures every response carries a correlation ID, generating one
@@ -79,6 +110,29 @@ func (h *Handlers) listSyncRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, runs)
+}
+
+func (h *Handlers) retrySyncRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	run, err := h.store.GetRun(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+			return
+		}
+		h.logger.Error("failed to look up sync run", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})
+		return
+	}
+
+	newRun, err := h.retrier.PollVenueNow(r.Context(), run.VenueID)
+	if err != nil {
+		h.logger.Error("failed to retry venue poll", "venueId", run.VenueID, "error", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "venue_not_configured"})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, newRun)
 }
 
 func (h *Handlers) health(w http.ResponseWriter, r *http.Request) {

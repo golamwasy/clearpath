@@ -4,6 +4,7 @@ import com.clearpath.availability.AppConfig
 import com.clearpath.availability.audit.MongoAuditStore
 import com.clearpath.availability.idempotency.IdempotencyStore
 import com.clearpath.availability.model.AvailabilityState
+import com.clearpath.availability.model.AvailabilityStatus
 import com.clearpath.availability.model.MenuEvent
 import com.clearpath.availability.state.RedisAvailabilityStore
 import com.clearpath.tracing.TraceContext
@@ -81,17 +82,18 @@ class MenuEventConsumer(
                 return@withSpan
             }
 
-            val available = event.eventType != "ItemDeleted"
+            val status = if (event.eventType == "ItemDeleted") AvailabilityStatus.SOLD_OUT else AvailabilityStatus.IN_STOCK
             val state = AvailabilityState(
                 venueId = event.venueId,
                 itemId = event.itemId,
-                available = available,
+                status = status,
+                soldOutUntil = null,
                 version = event.version,
                 updatedAt = Instant.now().toString(),
             )
 
             redisStore.put(state, ctx)
-            auditStore.append(event, available)
+            auditStore.append(event, status)
 
             logger.info("processed event ${event.eventId} type=${event.eventType} item=${event.itemId}")
         }

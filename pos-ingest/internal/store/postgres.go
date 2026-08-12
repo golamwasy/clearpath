@@ -107,6 +107,23 @@ func (s *Store) FinishRun(ctx context.Context, runID string, status model.SyncSt
 	return nil
 }
 
+// GetRun returns a single sync run by ID, or pgx.ErrNoRows if it doesn't exist.
+func (s *Store) GetRun(ctx context.Context, id string) (model.SyncRun, error) {
+	query := `
+		SELECT id, venue_id, provider, started_at, finished_at, items_changed, status, error, correlation_id
+		FROM sync_runs
+		WHERE id = $1
+	`
+	var run model.SyncRun
+	err := s.pool.QueryRow(ctx, query, id).Scan(
+		&run.ID, &run.VenueID, &run.Provider, &run.StartedAt, &run.FinishedAt, &run.ItemsChanged, &run.Status, &run.Error, &run.CorrelationID,
+	)
+	if err != nil {
+		return model.SyncRun{}, err
+	}
+	return run, nil
+}
+
 // RecentRuns returns the most recent sync runs, optionally filtered by venue.
 func (s *Store) RecentRuns(ctx context.Context, venueID string, limit int) ([]model.SyncRun, error) {
 	if limit <= 0 {

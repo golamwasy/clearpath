@@ -56,7 +56,7 @@ If you make a new structural decision, write a new ADR.
 
 ## Current state
 
-Phase: 3 (distributed tracing)
+Phase: 4 (merchant-web)
 
 Working:
 - menu-service: Postgres schema (venues, categories, items, modifiers,
@@ -146,15 +146,68 @@ Working:
   `docs/adr/0002-redis-mongo-split.md`,
   `docs/adr/0003-tracing-wire-format.md` (bespoke JSON-over-Kafka wire
   format instead of adopting OpenTelemetry — reasoning and consequences in
-  the ADR).
+  the ADR), `docs/adr/0004-manual-availability-override.md` (availability-
+  service's manual-override endpoint writes Redis directly, bypassing
+  Kafka — see below).
+- `merchant-web` (React/TS/Vite, port 5173 in dev): three screens — menu
+  editor (inline price editing, keyboard-operable reorder via up/down
+  buttons rather than drag-only, optimistic updates via TanStack Query,
+  409 version-conflict handling that shows the server's current name/price
+  inline rather than a generic error), availability board (toggle
+  in-stock/sold-out/sold-out-until-a-time per item), sync status (table of
+  `pos-ingest` runs with a retry button). No flow diagram, trace timeline,
+  or chaos panel — deliberately deferred to phase 5. No venue-
+  creation/switching UI or category CRUD UI — menu-service has no category
+  resource and this phase didn't add one; venue is a route param today.
+  API types are generated (`npm run gen:api`, via `openapi-typescript`)
+  from hand-written OpenAPI specs committed alongside each backend service
+  (`menu-service/openapi.yaml`, `availability-service/openapi.yaml`,
+  `pos-ingest/openapi.yaml` — nothing generates these from the Ktor/Go code
+  itself yet, so keep them in sync by hand when a route changes);
+  `npm run build` regenerates types before typechecking, so a spec change
+  that breaks a field/shape fails the frontend build. Two Playwright specs
+  (`e2e/price-edit.spec.ts`, `e2e/availability-toggle.spec.ts`), each
+  reloading the page and asserting the change persisted server-side, not
+  just in the client cache; a Vitest+Testing Library test for the
+  conflict-banner behavior. CI: `.github/workflows/merchant-web.yml`.
+- Backend additions made to support the above (menu-service and
+  availability-service had no wire contract for several things this phase's
+  screens needed — see `docs/plan-phase4.md` section 0 for the full audit):
+  menu-service items gained `priceCents`/`sortOrder` columns, and a 409
+  version-conflict response now includes the current server-side item
+  (`ConflictResponse.current`) so the client doesn't need a follow-up `GET`
+  to show what changed. availability-service's `AvailabilityState.available:
+  Boolean` became a `status` string (`in_stock`/`sold_out`/
+  `sold_out_until`) plus `soldOutUntil`, and gained
+  `PUT /venues/{venueId}/items/{itemId}/availability` for merchant-
+  triggered overrides — this writes straight to Redis/Mongo, bypassing
+  `menu.events`/`stock.events` entirely (ADR 0004), since `stock.events`
+  still has no producer or consumer. pos-ingest gained
+  `POST /sync-runs/{id}/retry`, re-polling the run's venue synchronously
+  through the existing (now-exported) `Pool.PollVenueNow`.
+- CORS: all three services (menu-service, availability-service, pos-ingest)
+  now send CORS headers — found missing only once `merchant-web` was
+  smoke-tested against a live backend in an actual browser, which silently
+  blocked every cross-origin request. Allowed origin defaults to
+  `localhost:5173` (Vite's default dev port), overridable via
+  `CORS_ALLOWED_ORIGIN_HOST` (Kotlin services) / `CORS_ALLOWED_ORIGIN` (Go)
+  env vars, set explicitly in `docker-compose.yml`. No gateway/reverse-proxy
+  was introduced; each service answers CORS for itself.
 
 Not built yet:
 - storefront-api
-- merchant-web frontend (no UI was built this phase, per instructions —
-  `trace-collector`'s REST/SSE API is the surface a future frontend phase
-  would read)
 - stock.events topic and its consumers; no consumer exists for `pos.sync`
-  either
+  either. availability-service's manual-override endpoint (above) doesn't
+  publish to `stock.events` either, since it doesn't exist — noted as a
+  follow-up in ADR 0004 for when it does.
+- Flow diagram, trace timeline, chaos panel on merchant-web (phase 5).
+  Venue-creation/switching UI, category CRUD UI, pagination UI beyond
+  `pos-ingest`'s `limit` query param.
+- menu-service's `Prices` table (itemId, currency, amountCents,
+  effectiveFrom) is still unused — item pricing is the new flat
+  `items.price_cents` column instead (see `docs/plan-phase4.md` section 4.1
+  for why: `Prices` has no version/optimistic-lock semantics and nothing
+  routes to it).
 - /metrics on all four services (now including trace-collector) is a stub
   (returns a placeholder, not real Prometheus output)
 - outbox table retention/cleanup job

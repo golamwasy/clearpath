@@ -1,5 +1,6 @@
 package com.clearpath.menu.routes
 
+import com.clearpath.menu.model.ConflictResponse
 import com.clearpath.menu.model.CreateItemRequest
 import com.clearpath.menu.model.ErrorResponse
 import com.clearpath.menu.model.UpdateItemRequest
@@ -37,7 +38,10 @@ fun Route.itemRoutes(repository: ItemRepository) {
                 when (val result = repository.create(venueId, request, call.traceContext)) {
                     is ItemWriteResult.Success -> call.respond(HttpStatusCode.Created, result.item)
                     is ItemWriteResult.NotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("not_found", "venue not found"))
-                    is ItemWriteResult.VersionConflict -> call.respond(HttpStatusCode.Conflict, ErrorResponse("version_conflict", "unexpected"))
+                    is ItemWriteResult.VersionConflict -> call.respond(
+                        HttpStatusCode.Conflict,
+                        ConflictResponse("version_conflict", "unexpected", result.current),
+                    )
                 }
             }
 
@@ -60,7 +64,7 @@ fun Route.itemRoutes(repository: ItemRepository) {
                         is ItemWriteResult.NotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("not_found", "item not found"))
                         is ItemWriteResult.VersionConflict -> call.respond(
                             HttpStatusCode.Conflict,
-                            ErrorResponse("version_conflict", "item was modified concurrently"),
+                            ConflictResponse("version_conflict", "item was modified concurrently", result.current),
                         )
                     }
                 }
@@ -78,7 +82,7 @@ fun Route.itemRoutes(repository: ItemRepository) {
                         is ItemWriteResult.NotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("not_found", "item not found"))
                         is ItemWriteResult.VersionConflict -> call.respond(
                             HttpStatusCode.Conflict,
-                            ErrorResponse("version_conflict", "item was modified concurrently"),
+                            ConflictResponse("version_conflict", "item was modified concurrently", result.current),
                         )
                     }
                 }

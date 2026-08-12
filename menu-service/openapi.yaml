@@ -1,0 +1,217 @@
+openapi: 3.0.3
+info:
+  title: menu-service
+  description: Canonical menu — venues and items, optimistic-locked, transactional outbox.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8081
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /ready:
+    get:
+      operationId: ready
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /venues:
+    post:
+      operationId: createVenue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VenueRequest" }
+      responses:
+        "201":
+          description: Venue created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VenueResponse" }
+  /venues/{venueId}/items:
+    parameters:
+      - name: venueId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: createItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateItemRequest" }
+      responses:
+        "201":
+          description: Item created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemResponse" }
+        "400":
+          description: Invalid venueId
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Venue not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Version conflict (currently unreachable on create, documented for type-safety)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConflictResponse" }
+    get:
+      operationId: listItems
+      responses:
+        "200":
+          description: Items in the venue, all categories, soft-deleted excluded
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ItemResponse" }
+        "400":
+          description: Invalid venueId
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /venues/{venueId}/items/{itemId}:
+    parameters:
+      - name: venueId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: updateItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateItemRequest" }
+      responses:
+        "200":
+          description: Item updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemResponse" }
+        "400":
+          description: Invalid path parameter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Item was modified concurrently — response carries the server's current item state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConflictResponse" }
+    delete:
+      operationId: deleteItem
+      parameters:
+        - name: version
+          in: query
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Item soft-deleted
+        "400":
+          description: Invalid path parameter or missing version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Item not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Item was modified concurrently — response carries the server's current item state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConflictResponse" }
+components:
+  schemas:
+    VenueRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+    VenueResponse:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+    CreateItemRequest:
+      type: object
+      required: [name]
+      properties:
+        categoryId: { type: string, format: uuid, nullable: true }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        priceCents: { type: integer, format: int64, nullable: true }
+        sortOrder: { type: integer, default: 0 }
+    UpdateItemRequest:
+      type: object
+      required: [version, name]
+      properties:
+        version: { type: integer }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        categoryId: { type: string, format: uuid, nullable: true }
+        priceCents: { type: integer, format: int64, nullable: true }
+        sortOrder: { type: integer, default: 0 }
+    ItemResponse:
+      type: object
+      required: [id, venueId, categoryId, name, description, priceCents, sortOrder, version, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        venueId: { type: string, format: uuid }
+        categoryId: { type: string, format: uuid, nullable: true }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        priceCents: { type: integer, format: int64, nullable: true }
+        sortOrder: { type: integer }
+        version: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string }
+        message: { type: string }
+    ConflictResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string }
+        message: { type: string }
+        current:
+          allOf: [{ $ref: "#/components/schemas/ItemResponse" }]
+          nullable: true

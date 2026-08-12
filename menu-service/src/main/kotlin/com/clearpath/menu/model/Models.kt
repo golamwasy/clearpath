@@ -13,6 +13,8 @@ data class CreateItemRequest(
     val categoryId: String? = null,
     val name: String,
     val description: String? = null,
+    val priceCents: Long? = null,
+    val sortOrder: Int = 0,
 )
 
 @Serializable
@@ -21,6 +23,8 @@ data class UpdateItemRequest(
     val name: String,
     val description: String? = null,
     val categoryId: String? = null,
+    val priceCents: Long? = null,
+    val sortOrder: Int = 0,
 )
 
 @Serializable
@@ -30,6 +34,8 @@ data class ItemResponse(
     val categoryId: String?,
     val name: String,
     val description: String?,
+    val priceCents: Long?,
+    val sortOrder: Int,
     val version: Int,
     val createdAt: String,
     val updatedAt: String,
@@ -37,6 +43,9 @@ data class ItemResponse(
 
 @Serializable
 data class ErrorResponse(val error: String, val message: String)
+
+@Serializable
+data class ConflictResponse(val error: String, val message: String, val current: ItemResponse?)
 
 @Serializable
 data class MenuEvent(

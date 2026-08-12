@@ -1,0 +1,119 @@
+openapi: 3.0.3
+info:
+  title: availability-service
+  description: >
+    Hot read path for item availability. Reads are Redis-backed. Writes come from two
+    sources: the menu.events Kafka consumer (in_stock/sold_out only), and the manual
+    merchant-override endpoint below (adds sold_out_until) — see ADR 0004.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8082
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /ready:
+    get:
+      operationId: ready
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /venues/{venueId}/availability:
+    parameters:
+      - name: venueId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getVenueAvailability
+      responses:
+        "200":
+          description: Current availability for every item in the venue
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvailabilityResponse" }
+        "400":
+          description: Invalid venueId
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /venues/{venueId}/items/{itemId}/availability:
+    parameters:
+      - name: venueId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: updateItemAvailability
+      description: Manual merchant override. Bypasses menu.events entirely — see ADR 0004.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAvailabilityRequest" }
+      responses:
+        "200":
+          description: Updated availability state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvailabilityState" }
+        "400":
+          description: Invalid status, missing soldOutUntil, or invalid path parameter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+components:
+  schemas:
+    AvailabilityStatus:
+      type: string
+      enum: [in_stock, sold_out, sold_out_until]
+    AvailabilityState:
+      type: object
+      required: [venueId, itemId, status, version, updatedAt]
+      properties:
+        venueId: { type: string }
+        itemId: { type: string }
+        status: { $ref: "#/components/schemas/AvailabilityStatus" }
+        soldOutUntil: { type: string, format: date-time, nullable: true }
+        version: { type: integer }
+        updatedAt: { type: string, format: date-time }
+    AvailabilityResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityState" }
+    UpdateAvailabilityRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: "#/components/schemas/AvailabilityStatus" }
+        soldOutUntil:
+          type: string
+          format: date-time
+          nullable: true
+          description: Required when status is sold_out_until, ignored otherwise.
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string }
+        message: { type: string }
