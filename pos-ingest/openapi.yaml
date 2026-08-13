@@ -78,6 +78,46 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /chaos/state:
+    get:
+      operationId: getChaosState
+      description: 404s when CHAOS_ENABLED=false. See ADR 0005.
+      responses:
+        "200":
+          description: Current chaos state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaosState" }
+        "404":
+          description: Chaos endpoints disabled
+  /chaos/latency:
+    post:
+      operationId: setChaosLatency
+      description: >
+        Injects (ms > 0) or clears (ms = 0) artificial delay before each venue poll. 404s
+        when CHAOS_ENABLED=false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ms]
+              properties:
+                ms: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Updated chaos state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaosState" }
+        "400":
+          description: Invalid ms
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Chaos endpoints disabled
 components:
   schemas:
     SyncRun:
@@ -99,3 +139,9 @@ components:
       required: [error]
       properties:
         error: { type: string }
+    ChaosState:
+      type: object
+      required: [chaosEnabled, latencyMs]
+      properties:
+        chaosEnabled: { type: boolean }
+        latencyMs: { type: integer }

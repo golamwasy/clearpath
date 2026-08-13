@@ -35,6 +35,18 @@ type Span struct {
 	Status        string  `json:"status"`
 	Error         *string `json:"error"`
 	Root          bool    `json:"root"`
+	// Additive fields, populated only where the caller has them at hand (see Attributes). See
+	// docs/adr/0005-observability-ui.md.
+	IdempotencyKey *string `json:"idempotencyKey"`
+	KafkaPartition *int    `json:"kafkaPartition"`
+	RetryCount     *int    `json:"retryCount"`
+}
+
+// Attributes holds the optional Span fields above. Pass nil to WithSpan when none apply.
+type Attributes struct {
+	IdempotencyKey *string
+	KafkaPartition *int
+	RetryCount     *int
 }
 
 type traceState struct {
@@ -90,7 +102,12 @@ func (t *Tracer) Close() error {
 // an error is recorded as status=error and still returned unchanged, so
 // tracing observes failures without ever swallowing them or blocking the
 // caller on the publish.
-func (t *Tracer) WithSpan(ctx context.Context, operation string, fn func(context.Context) error) error {
+//
+// attrs may be nil. When non-nil, it may be mutated by fn (fn captures it by
+// closure, since fn's own signature is unchanged) to attach a field — e.g. a
+// Kafka partition — that's only known partway through the span; fields set
+// after fn returns are still read when the span is emitted.
+func (t *Tracer) WithSpan(ctx context.Context, operation string, attrs *Attributes, fn func(context.Context) error) error {
 	parent, _ := ctx.Value(traceStateKey{}).(traceState)
 	spanID := newSpanID()
 	child := traceState{correlationID: parent.correlationID, spanID: spanID}
@@ -107,27 +124,33 @@ func (t *Tracer) WithSpan(ctx context.Context, operation string, fn func(context
 		msg := err.Error()
 		errMsg = &msg
 	}
-	t.emit(child, parent.spanID, operation, start, finish, status, errMsg)
+	t.emit(child, parent.spanID, operation, start, finish, status, errMsg, attrs)
 	return err
 }
 
-func (t *Tracer) emit(state traceState, parentSpanID, operation string, start, finish time.Time, status string, errMsg *string) {
+func (t *Tracer) emit(state traceState, parentSpanID, operation string, start, finish time.Time, status string, errMsg *string, attrs *Attributes) {
+	if attrs == nil {
+		attrs = &Attributes{}
+	}
 	var parent *string
 	if parentSpanID != "" {
 		parent = &parentSpanID
 	}
 	span := Span{
-		CorrelationID: state.correlationID,
-		SpanID:        state.spanID,
-		ParentSpanID:  parent,
-		Service:       t.service,
-		Operation:     operation,
-		StartedAt:     start.Format(time.RFC3339Nano),
-		FinishedAt:    finish.Format(time.RFC3339Nano),
-		DurationMs:    finish.Sub(start).Milliseconds(),
-		Status:        status,
-		Error:         errMsg,
-		Root:          parentSpanID == "",
+		CorrelationID:  state.correlationID,
+		SpanID:         state.spanID,
+		ParentSpanID:   parent,
+		Service:        t.service,
+		Operation:      operation,
+		StartedAt:      start.Format(time.RFC3339Nano),
+		FinishedAt:     finish.Format(time.RFC3339Nano),
+		DurationMs:     finish.Sub(start).Milliseconds(),
+		Status:         status,
+		Error:          errMsg,
+		Root:           parentSpanID == "",
+		IdempotencyKey: attrs.IdempotencyKey,
+		KafkaPartition: attrs.KafkaPartition,
+		RetryCount:     attrs.RetryCount,
 	}
 
 	go func() {

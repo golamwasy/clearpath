@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/clearpath/pos-ingest/internal/config"
@@ -32,7 +33,22 @@ type Pool struct {
 
 	sem chan struct{}
 
+	// chaosLatencyMs is injected artificial delay (milliseconds) applied before each venue
+	// poll, when > 0. Set via POST /chaos/latency, guarded by CHAOS_ENABLED. See
+	// docs/adr/0005-observability-ui.md.
+	chaosLatencyMs atomic.Int64
+
 	logger *slog.Logger
+}
+
+// SetChaosLatencyMs sets (or clears, with 0) the artificial delay applied before each venue poll.
+func (p *Pool) SetChaosLatencyMs(ms int64) {
+	p.chaosLatencyMs.Store(ms)
+}
+
+// ChaosLatencyMs returns the currently injected delay, in milliseconds.
+func (p *Pool) ChaosLatencyMs() int64 {
+	return p.chaosLatencyMs.Load()
 }
 
 func NewPool(
@@ -122,6 +138,14 @@ func (p *Pool) PollVenueNow(ctx context.Context, venueID string) (model.SyncRun,
 }
 
 func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) (model.SyncRun, error) {
+	if ms := p.chaosLatencyMs.Load(); ms > 0 {
+		select {
+		case <-time.After(time.Duration(ms) * time.Millisecond):
+		case <-ctx.Done():
+			return model.SyncRun{}, ctx.Err()
+		}
+	}
+
 	prov, ok := p.providers[venue.Provider]
 	if !ok {
 		p.logger.Error("unknown provider for venue", "venue", venue.VenueID, "provider", venue.Provider)
@@ -138,12 +162,14 @@ func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) (model.S
 		return model.SyncRun{}, err
 	}
 
+	fetchAttempts := 0
 	items, err := retry.Do(ctx, retry.Config{
 		MaxAttempts: p.maxRetries,
 		BaseDelay:   p.retryBaseDelay,
 		MaxDelay:    p.retryMaxDelay,
 		Retryable:   provider.Retryable,
 	}, func(ctx context.Context) ([]model.NormalizedItem, error) {
+		fetchAttempts++
 		return prov.FetchVenueMenu(ctx, venue.VenueID)
 	})
 
@@ -160,7 +186,7 @@ func (p *Pool) pollVenue(ctx context.Context, venue config.VenueConfig) (model.S
 		Items:         model.ItemsToSynced(items),
 	}
 	finishedAt := time.Now().UTC()
-	if err := p.producer.PublishSync(ctx, envelope); err != nil {
+	if err := p.producer.PublishSync(ctx, envelope, fetchAttempts); err != nil {
 		logger.Error("failed to publish pos.sync", "error", err)
 		if fErr := p.store.FinishRun(ctx, run.ID, model.SyncStatusFailed, 0, err); fErr != nil {
 			logger.Error("failed to record sync run failure", "error", fErr)

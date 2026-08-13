@@ -39,16 +39,26 @@ class Tracer(private val service: String, kafkaBootstrapServers: String, private
      * Runs [block] under a new child span of [ctx], and emits that span afterward regardless of
      * whether [block] succeeded or threw — an exception is recorded as `status=error` and then
      * rethrown unchanged, so tracing observes failures without ever swallowing them.
+     *
+     * [attributes] is a mutable holder the caller may pass in and mutate from inside [block]
+     * (by closure capture, since [block]'s signature is unchanged) to attach fields — e.g. a
+     * Kafka partition — that are only known partway through the span. Fields set on it after
+     * [block] returns are read when the span is emitted.
      */
-    suspend fun <T> withSpan(ctx: TraceContext, operation: String, block: suspend (TraceContext) -> T): T {
+    suspend fun <T> withSpan(
+        ctx: TraceContext,
+        operation: String,
+        attributes: SpanAttributes = SpanAttributes(),
+        block: suspend (TraceContext) -> T,
+    ): T {
         val child = TraceContext(ctx.correlationId, TraceContext.newId())
         val start = Instant.now()
         return try {
             val result = block(child)
-            emit(child, ctx.spanId, operation, start, Instant.now(), "ok", null)
+            emit(child, ctx.spanId, operation, start, Instant.now(), "ok", null, attributes)
             result
         } catch (e: Exception) {
-            emit(child, ctx.spanId, operation, start, Instant.now(), "error", e.message)
+            emit(child, ctx.spanId, operation, start, Instant.now(), "error", e.message, attributes)
             throw e
         }
     }
@@ -61,6 +71,7 @@ class Tracer(private val service: String, kafkaBootstrapServers: String, private
         end: Instant,
         status: String,
         error: String?,
+        attributes: SpanAttributes = SpanAttributes(),
     ) {
         try {
             val span = Span(
@@ -75,6 +86,9 @@ class Tracer(private val service: String, kafkaBootstrapServers: String, private
                 status = status,
                 error = error,
                 root = parentSpanId.isBlank(),
+                idempotencyKey = attributes.idempotencyKey,
+                kafkaPartition = attributes.kafkaPartition,
+                retryCount = attributes.retryCount,
             )
             val record = ProducerRecord(topic, span.correlationId, json.encodeToString(span))
             record.headers().add(RecordHeader(CORRELATION_ID_KAFKA_HEADER, span.correlationId.toByteArray()))

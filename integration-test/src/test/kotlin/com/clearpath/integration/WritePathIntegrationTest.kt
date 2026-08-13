@@ -2,6 +2,7 @@ package com.clearpath.integration
 
 import com.clearpath.availability.AppConfig as AvailabilityConfig
 import com.clearpath.availability.audit.MongoAuditStore
+import com.clearpath.availability.chaos.ChaosState
 import com.clearpath.availability.consumer.MenuEventConsumer
 import com.clearpath.availability.db.DatabaseFactory as AvailabilityDatabaseFactory
 import com.clearpath.availability.idempotency.IdempotencyStore
@@ -97,13 +98,15 @@ class WritePathIntegrationTest {
             )
             jedisPool = JedisPool(availabilityConfig.redisHost, availabilityConfig.redisPort)
             val mongoClient = MongoClient.create(availabilityConfig.mongoUri)
-            val redisStore = RedisAvailabilityStore(jedisPool, availabilityTracer)
+            val chaosState = ChaosState()
+            val redisStore = RedisAvailabilityStore(jedisPool, availabilityTracer, chaosState)
             val auditStore = MongoAuditStore(mongoClient.getDatabase(availabilityConfig.mongoDatabase))
             val idempotencyStore = IdempotencyStore(availabilityDb, availabilityTracer)
-            val consumer = MenuEventConsumer(availabilityConfig, idempotencyStore, redisStore, auditStore, availabilityTracer)
+            val consumer =
+                MenuEventConsumer(availabilityConfig, idempotencyStore, redisStore, auditStore, availabilityTracer, chaosState)
 
             availabilityServer = embeddedServer(Netty, port = availabilityConfig.httpPort) {
-                availabilityModule(consumer, redisStore, auditStore, availabilityTracer)
+                availabilityModule(availabilityConfig, consumer, redisStore, auditStore, availabilityTracer, chaosState)
             }.start(wait = false)
         }
 

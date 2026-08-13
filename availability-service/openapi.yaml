@@ -79,6 +79,84 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /chaos/state:
+    get:
+      operationId: getChaosState
+      description: 404s when CHAOS_ENABLED=false. See ADR 0005.
+      responses:
+        "200":
+          description: Current chaos flags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaosStateResponse" }
+        "404":
+          description: Chaos endpoints disabled
+  /chaos/consumer/pause:
+    post:
+      operationId: pauseChaosConsumer
+      description: Stops the menu.events consumer from fetching — lag grows. 404s when disabled.
+      responses:
+        "200":
+          description: Updated chaos flags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaosStateResponse" }
+        "404":
+          description: Chaos endpoints disabled
+  /chaos/consumer/resume:
+    post:
+      operationId: resumeChaosConsumer
+      description: 404s when disabled.
+      responses:
+        "200":
+          description: Updated chaos flags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaosStateResponse" }
+        "404":
+          description: Chaos endpoints disabled
+  /chaos/redis/break:
+    post:
+      operationId: breakChaosRedis
+      description: Simulates Redis unreachability in-process. 404s when disabled.
+      responses:
+        "200":
+          description: Updated chaos flags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaosStateResponse" }
+        "404":
+          description: Chaos endpoints disabled
+  /chaos/redis/restore:
+    post:
+      operationId: restoreChaosRedis
+      description: 404s when disabled.
+      responses:
+        "200":
+          description: Updated chaos flags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChaosStateResponse" }
+        "404":
+          description: Chaos endpoints disabled
+  /chaos/duplicate-delivery:
+    post:
+      operationId: forceDuplicateDelivery
+      description: >
+        Replays the last raw menu.events record this consumer processed through the same
+        idempotency-checked path. Always accepted=false — proof the dedupe table rejects a
+        byte-identical redelivery. 404s when disabled.
+      responses:
+        "200":
+          description: Replay outcome (always rejected)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuplicateDeliveryResponse" }
+        "404":
+          description: Chaos endpoints disabled, or nothing has been processed yet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DuplicateDeliveryResponse" }
 components:
   schemas:
     AvailabilityStatus:
@@ -117,3 +195,18 @@ components:
       properties:
         error: { type: string }
         message: { type: string }
+    ChaosStateResponse:
+      type: object
+      required: [consumerPaused, redisUnreachable]
+      properties:
+        consumerPaused: { type: boolean }
+        redisUnreachable: { type: boolean }
+    DuplicateDeliveryResponse:
+      type: object
+      required: [accepted, reason]
+      properties:
+        eventId: { type: string, nullable: true }
+        itemId: { type: string, nullable: true }
+        correlationId: { type: string, nullable: true }
+        accepted: { type: boolean }
+        reason: { type: string }

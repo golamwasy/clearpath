@@ -32,16 +32,40 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-type Handlers struct {
-	store   SyncRunLister
-	retrier VenueRetrier
-	ready   Pinger
-	logger  *slog.Logger
-	tracer  *tracing.Tracer
+// ChaosController is the subset of *worker.Pool the chaos-latency endpoints control.
+type ChaosController interface {
+	SetChaosLatencyMs(ms int64)
+	ChaosLatencyMs() int64
 }
 
-func NewHandlers(store SyncRunLister, retrier VenueRetrier, ready Pinger, logger *slog.Logger, tracer *tracing.Tracer) *Handlers {
-	return &Handlers{store: store, retrier: retrier, ready: ready, logger: logger, tracer: tracer}
+type Handlers struct {
+	store        SyncRunLister
+	retrier      VenueRetrier
+	ready        Pinger
+	logger       *slog.Logger
+	tracer       *tracing.Tracer
+	chaos        ChaosController
+	chaosEnabled bool
+}
+
+func NewHandlers(
+	store SyncRunLister,
+	retrier VenueRetrier,
+	ready Pinger,
+	logger *slog.Logger,
+	tracer *tracing.Tracer,
+	chaos ChaosController,
+	chaosEnabled bool,
+) *Handlers {
+	return &Handlers{
+		store:        store,
+		retrier:      retrier,
+		ready:        ready,
+		logger:       logger,
+		tracer:       tracer,
+		chaos:        chaos,
+		chaosEnabled: chaosEnabled,
+	}
 }
 
 func (h *Handlers) Routes() http.Handler {
@@ -51,6 +75,8 @@ func (h *Handlers) Routes() http.Handler {
 	mux.HandleFunc("GET /health", h.correlate("GET /health", h.health))
 	mux.HandleFunc("GET /ready", h.correlate("GET /ready", h.readyCheck))
 	mux.HandleFunc("GET /metrics", h.correlate("GET /metrics", h.metrics))
+	mux.HandleFunc("GET /chaos/state", h.correlate("GET /chaos/state", h.chaosState))
+	mux.HandleFunc("POST /chaos/latency", h.correlate("POST /chaos/latency", h.setChaosLatency))
 	return withCORS(mux)
 }
 
@@ -87,7 +113,7 @@ func (h *Handlers) correlate(operation string, next http.HandlerFunc) http.Handl
 		w.Header().Set(correlationIDHeader, correlationID)
 
 		ctx := tracing.WithCorrelationID(r.Context(), correlationID)
-		_ = h.tracer.WithSpan(ctx, "http."+operation, func(ctx context.Context) error {
+		_ = h.tracer.WithSpan(ctx, "http."+operation, nil, func(ctx context.Context) error {
 			next(w, r.WithContext(ctx))
 			return nil
 		})
@@ -153,6 +179,41 @@ func (h *Handlers) readyCheck(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) metrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte("# pos-ingest metrics not yet implemented\n"))
+}
+
+// chaosState is the response shape for GET /chaos/state and POST /chaos/latency.
+type chaosStateResponse struct {
+	ChaosEnabled bool  `json:"chaosEnabled"`
+	LatencyMs    int64 `json:"latencyMs"`
+}
+
+type setLatencyRequest struct {
+	Ms int64 `json:"ms"`
+}
+
+func (h *Handlers) chaosState(w http.ResponseWriter, r *http.Request) {
+	if !h.chaosEnabled {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, chaosStateResponse{ChaosEnabled: h.chaosEnabled, LatencyMs: h.chaos.ChaosLatencyMs()})
+}
+
+// setChaosLatency injects (or clears, with ms=0) artificial delay before each venue poll —
+// the pos-ingest half of the chaos panel. Guarded by CHAOS_ENABLED, 404s otherwise so the
+// surface isn't advertised. See docs/adr/0005-observability-ui.md.
+func (h *Handlers) setChaosLatency(w http.ResponseWriter, r *http.Request) {
+	if !h.chaosEnabled {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	var req setLatencyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Ms < 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid ms"})
+		return
+	}
+	h.chaos.SetChaosLatencyMs(req.Ms)
+	writeJSON(w, http.StatusOK, chaosStateResponse{ChaosEnabled: h.chaosEnabled, LatencyMs: h.chaos.ChaosLatencyMs()})
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -1,10 +1,12 @@
 package com.clearpath.availability
 
 import com.clearpath.availability.audit.MongoAuditStore
+import com.clearpath.availability.chaos.ChaosState
 import com.clearpath.availability.consumer.MenuEventConsumer
 import com.clearpath.availability.db.DatabaseFactory
 import com.clearpath.availability.idempotency.IdempotencyStore
 import com.clearpath.availability.routes.availabilityRoutes
+import com.clearpath.availability.routes.chaosRoutes
 import com.clearpath.availability.state.RedisAvailabilityStore
 import com.clearpath.tracing.Tracer
 import com.clearpath.tracing.installTracing
@@ -34,17 +36,25 @@ fun main() {
     val mongoClient = MongoClient.create(config.mongoUri)
     val mongoDatabase = mongoClient.getDatabase(config.mongoDatabase)
 
-    val redisStore = RedisAvailabilityStore(jedisPool, tracer)
+    val chaosState = ChaosState()
+    val redisStore = RedisAvailabilityStore(jedisPool, tracer, chaosState)
     val auditStore = MongoAuditStore(mongoDatabase)
     val idempotencyStore = IdempotencyStore(db, tracer)
-    val consumer = MenuEventConsumer(config, idempotencyStore, redisStore, auditStore, tracer)
+    val consumer = MenuEventConsumer(config, idempotencyStore, redisStore, auditStore, tracer, chaosState)
 
     embeddedServer(Netty, port = config.httpPort) {
-        moduleWith(consumer, redisStore, auditStore, tracer)
+        moduleWith(config, consumer, redisStore, auditStore, tracer, chaosState)
     }.start(wait = true)
 }
 
-fun Application.moduleWith(consumer: MenuEventConsumer, redisStore: RedisAvailabilityStore, auditStore: MongoAuditStore, tracer: Tracer) {
+fun Application.moduleWith(
+    config: AppConfig,
+    consumer: MenuEventConsumer,
+    redisStore: RedisAvailabilityStore,
+    auditStore: MongoAuditStore,
+    tracer: Tracer,
+    chaosState: ChaosState,
+) {
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
     }
@@ -72,5 +82,6 @@ fun Application.moduleWith(consumer: MenuEventConsumer, redisStore: RedisAvailab
         get("/metrics") { call.respond("# not implemented\n") }
 
         availabilityRoutes(redisStore, auditStore)
+        chaosRoutes(config, chaosState, consumer)
     }
 }

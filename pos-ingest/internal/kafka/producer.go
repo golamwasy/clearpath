@@ -46,22 +46,27 @@ func NewProducer(brokers []string, syncTopic, dlqTopic string, tracer *tracing.T
 }
 
 // PublishSync publishes a normalized sync run to pos.sync, keyed by venue ID.
-func (p *Producer) PublishSync(ctx context.Context, envelope model.SyncEnvelope) error {
-	return p.tracer.WithSpan(ctx, "kafka.publish "+p.syncTopic, func(ctx context.Context) error {
+// fetchAttempts is the number of attempts the caller's upstream POS fetch took
+// (1 = succeeded first try), recorded on the span as RetryCount.
+func (p *Producer) PublishSync(ctx context.Context, envelope model.SyncEnvelope, fetchAttempts int) error {
+	attrs := &tracing.Attributes{RetryCount: &fetchAttempts}
+	return p.tracer.WithSpan(ctx, "kafka.publish "+p.syncTopic, attrs, func(ctx context.Context) error {
 		payload, err := json.Marshal(envelope)
 		if err != nil {
 			return fmt.Errorf("marshal sync envelope: %w", err)
 		}
-		msg := segmentio.Message{
+		msgs := []segmentio.Message{{
 			Key:   []byte(envelope.VenueID),
 			Value: payload,
 			Headers: []segmentio.Header{
 				{Key: correlationIDHeaderKey, Value: []byte(envelope.CorrelationID)},
 			},
-		}
-		if err := p.syncWriter.WriteMessages(ctx, msg); err != nil {
+		}}
+		if err := p.syncWriter.WriteMessages(ctx, msgs...); err != nil {
 			return fmt.Errorf("publish pos.sync: %w", err)
 		}
+		partition := msgs[0].Partition
+		attrs.KafkaPartition = &partition
 		return nil
 	})
 }
@@ -69,7 +74,7 @@ func (p *Producer) PublishSync(ctx context.Context, envelope model.SyncEnvelope)
 // PublishDLQ publishes a failed sync attempt to pos.sync.dlq after retries
 // are exhausted.
 func (p *Producer) PublishDLQ(ctx context.Context, envelope model.DLQEnvelope) error {
-	return p.tracer.WithSpan(ctx, "kafka.publish "+p.dlqTopic, func(ctx context.Context) error {
+	return p.tracer.WithSpan(ctx, "kafka.publish "+p.dlqTopic, nil, func(ctx context.Context) error {
 		payload, err := json.Marshal(envelope)
 		if err != nil {
 			return fmt.Errorf("marshal dlq envelope: %w", err)

@@ -6,13 +6,19 @@
  * non-2xx response into a typed error the caller can inspect.
  */
 
-export type ServiceName = "menu" | "availability" | "pos";
+export type ServiceName = "menu" | "availability" | "pos" | "trace";
 
 const BASE_URLS: Record<ServiceName, string> = {
   menu: import.meta.env.VITE_MENU_API_URL ?? "http://localhost:8081",
   availability: import.meta.env.VITE_AVAILABILITY_API_URL ?? "http://localhost:8082",
   pos: import.meta.env.VITE_POS_API_URL ?? "http://localhost:8083",
+  trace: import.meta.env.VITE_TRACE_API_URL ?? "http://localhost:8084",
 };
+
+/** Exposed so useTraceStream (a raw EventSource, not a JSON fetch) can build the SSE URL. */
+export function serviceBaseUrl(service: ServiceName): string {
+  return BASE_URLS[service];
+}
 
 /**
  * Thrown for any non-2xx response. `body` is the parsed JSON error payload

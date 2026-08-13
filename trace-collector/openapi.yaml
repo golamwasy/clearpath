@@ -1,0 +1,147 @@
+openapi: 3.0.3
+info:
+  title: trace-collector
+  description: >
+    Ingests spans from system.trace into Mongo and serves them back out for merchant-web's
+    observability screens — the "system x-ray" this repo's frontend renders. See ADR 0003
+    (wire format) and ADR 0005 (observability UI additions: idempotencyKey/kafkaPartition/
+    retryCount on Span, and /consumer-lag).
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8084
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /ready:
+    get:
+      operationId: ready
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /traces:
+    get:
+      operationId: listTraces
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Recent traces, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TraceSummary" }
+  /traces/{correlationId}:
+    parameters:
+      - name: correlationId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getTrace
+      responses:
+        "200":
+          description: All spans for this correlation ID, sorted by start time
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Span" }
+  /traces/stream:
+    get:
+      operationId: streamTraces
+      description: Server-sent events. Each event's `data` field is one JSON-encoded Span.
+      responses:
+        "200":
+          description: text/event-stream of Span objects, one per real-time hop
+          content:
+            text/event-stream:
+              schema: { type: string }
+  /consumer-lag:
+    get:
+      operationId: getConsumerLag
+      description: >
+        Kafka consumer lag for the consumer groups configured via MONITORED_CONSUMER_GROUPS
+        (default: availability-service on menu.events, trace-collector on system.trace — the
+        only two consumer groups that exist today). Computed on demand via AdminClient, not
+        cached.
+      responses:
+        "200":
+          description: Lag per monitored consumer group
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ConsumerGroupLag" }
+components:
+  schemas:
+    Span:
+      type: object
+      required: [correlationId, spanId, service, operation, startedAt, finishedAt, durationMs, status, root]
+      properties:
+        correlationId: { type: string }
+        spanId: { type: string }
+        parentSpanId: { type: string, nullable: true }
+        service: { type: string }
+        operation: { type: string }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+        durationMs: { type: integer }
+        status: { type: string, enum: [ok, error] }
+        error: { type: string, nullable: true }
+        root: { type: boolean }
+        idempotencyKey:
+          type: string
+          nullable: true
+          description: Only set on the availability-service kafka.consume menu.events span.
+        kafkaPartition:
+          type: integer
+          nullable: true
+          description: Only set on the kafka.publish/kafka.consume spans that have it at hand.
+        retryCount:
+          type: integer
+          nullable: true
+          description: Only set on pos-ingest's kafka.publish pos.sync span (fetch attempts, 1 = first-try success).
+    TraceSummary:
+      type: object
+      required: [correlationId, startedAt, finishedAt, durationMs, spanCount, status]
+      properties:
+        correlationId: { type: string }
+        startedAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+        durationMs: { type: integer }
+        spanCount: { type: integer }
+        status: { type: string, enum: [ok, error] }
+    PartitionLag:
+      type: object
+      required: [partition, lag]
+      properties:
+        partition: { type: integer }
+        lag: { type: integer }
+    ConsumerGroupLag:
+      type: object
+      required: [groupId, topic, lag, partitions]
+      properties:
+        groupId: { type: string }
+        topic: { type: string }
+        lag: { type: integer }
+        partitions:
+          type: array
+          items: { $ref: "#/components/schemas/PartitionLag" }

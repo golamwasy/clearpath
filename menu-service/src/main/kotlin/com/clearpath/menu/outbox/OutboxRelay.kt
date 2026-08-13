@@ -2,6 +2,7 @@ package com.clearpath.menu.outbox
 
 import com.clearpath.menu.AppConfig
 import com.clearpath.menu.db.Outbox
+import com.clearpath.tracing.SpanAttributes
 import com.clearpath.tracing.TraceContext
 import com.clearpath.tracing.Tracer
 import kotlinx.coroutines.CoroutineScope
@@ -86,11 +87,13 @@ class OutboxRelay(private val config: AppConfig, private val db: Database, priva
             // The outbox table only persists correlationId, not the request's spanId, so the
             // relay hop's parent is unrecoverable — its span is emitted with root=true even
             // though it isn't the trace's true origin.
-            tracer.withSpan(TraceContext.root(correlationId), "kafka.publish ${config.menuEventsTopic}") {
+            val attrs = SpanAttributes()
+            tracer.withSpan(TraceContext.root(correlationId), "kafka.publish ${config.menuEventsTopic}", attrs) {
                 val record = ProducerRecord(config.menuEventsTopic, aggregateId.toString(), payload)
                 record.headers().add(RecordHeader("correlationId", correlationId.toByteArray()))
 
                 val ackedOffset = producer.send(record).get()
+                attrs.kafkaPartition = ackedOffset.partition()
 
                 transaction(db) {
                     Outbox.update({ Outbox.id eq id }) {

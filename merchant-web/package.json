@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "gen:api": "openapi-typescript ../menu-service/openapi.yaml -o src/api/generated/menu.ts && openapi-typescript ../availability-service/openapi.yaml -o src/api/generated/availability.ts && openapi-typescript ../pos-ingest/openapi.yaml -o src/api/generated/pos-ingest.ts",
+    "gen:api": "openapi-typescript ../menu-service/openapi.yaml -o src/api/generated/menu.ts && openapi-typescript ../availability-service/openapi.yaml -o src/api/generated/availability.ts && openapi-typescript ../pos-ingest/openapi.yaml -o src/api/generated/pos-ingest.ts && openapi-typescript ../trace-collector/openapi.yaml -o src/api/generated/trace.ts",
     "build": "npm run gen:api && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",

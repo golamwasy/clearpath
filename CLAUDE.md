@@ -56,7 +56,7 @@ If you make a new structural decision, write a new ADR.
 
 ## Current state
 
-Phase: 4 (merchant-web)
+Phase: 5 (observability UI)
 
 Working:
 - menu-service: Postgres schema (venues, categories, items, modifiers,
@@ -148,28 +148,69 @@ Working:
   format instead of adopting OpenTelemetry — reasoning and consequences in
   the ADR), `docs/adr/0004-manual-availability-override.md` (availability-
   service's manual-override endpoint writes Redis directly, bypassing
-  Kafka — see below).
-- `merchant-web` (React/TS/Vite, port 5173 in dev): three screens — menu
-  editor (inline price editing, keyboard-operable reorder via up/down
-  buttons rather than drag-only, optimistic updates via TanStack Query,
-  409 version-conflict handling that shows the server's current name/price
-  inline rather than a generic error), availability board (toggle
-  in-stock/sold-out/sold-out-until-a-time per item), sync status (table of
-  `pos-ingest` runs with a retry button). No flow diagram, trace timeline,
-  or chaos panel — deliberately deferred to phase 5. No venue-
-  creation/switching UI or category CRUD UI — menu-service has no category
-  resource and this phase didn't add one; venue is a route param today.
-  API types are generated (`npm run gen:api`, via `openapi-typescript`)
-  from hand-written OpenAPI specs committed alongside each backend service
-  (`menu-service/openapi.yaml`, `availability-service/openapi.yaml`,
-  `pos-ingest/openapi.yaml` — nothing generates these from the Ktor/Go code
-  itself yet, so keep them in sync by hand when a route changes);
-  `npm run build` regenerates types before typechecking, so a spec change
-  that breaks a field/shape fails the frontend build. Two Playwright specs
-  (`e2e/price-edit.spec.ts`, `e2e/availability-toggle.spec.ts`), each
-  reloading the page and asserting the change persisted server-side, not
-  just in the client cache; a Vitest+Testing Library test for the
-  conflict-banner behavior. CI: `.github/workflows/merchant-web.yml`.
+  Kafka — see below), `docs/adr/0005-observability-ui.md` (phase 5's
+  additive `Span` fields, chaos endpoints living in the owning services,
+  in-process duplicate-delivery replay — see below).
+- `merchant-web` (React/TS/Vite, port 5173 in dev): six screens now — the
+  phase 4 trio (menu editor, availability board, sync status) plus phase
+  5's system x-ray: `/system/flow` (plain SVG + `requestAnimationFrame`
+  live flow diagram, no graph library, driven by `trace-collector`'s SSE
+  stream via a shared `useTraceStream()`/`EventSource`; edges are only
+  drawn for hops that actually exist — see `docs/plan-phase5.md` "What's
+  real vs. deliberately absent" — with Kafka consumer lag badges polled
+  from `GET /consumer-lag`), `/system/traces` (trace list + waterfall,
+  spans expandable to raw JSON including the new `idempotencyKey`/
+  `kafkaPartition`/`retryCount` fields, rendered as `—` when absent),
+  `/system/chaos` (pause/resume the menu.events consumer, break/restore
+  Redis, inject pos-ingest latency, and force a duplicate delivery — the
+  headline case, proving the dedupe check rejects a replayed event while
+  item state stays unchanged). `App.tsx` is now a two-pane layout: a
+  persistent compact flow diagram sits in a sidebar next to every screen
+  except `/system/flow` itself (one `FlowDiagram` component, a `variant`
+  prop, not two implementations), so cause and effect are visible
+  together. No venue-creation/switching UI or category CRUD UI —
+  menu-service has no category resource and no phase has added one; venue
+  is a route param today. API types are generated (`npm run gen:api`, via
+  `openapi-typescript`) from hand-written OpenAPI specs committed alongside
+  each backend service (`menu-service/openapi.yaml`,
+  `availability-service/openapi.yaml`, `pos-ingest/openapi.yaml`,
+  `trace-collector/openapi.yaml` — nothing generates these from the
+  Ktor/Go code itself yet, so keep them in sync by hand when a route
+  changes); `npm run build` regenerates all four before typechecking, so a
+  spec change that breaks a field/shape fails the frontend build. Playwright
+  specs (`e2e/price-edit.spec.ts`, `e2e/availability-toggle.spec.ts`,
+  `e2e/chaos-duplicate-delivery.spec.ts`), each reloading the page and
+  asserting the change persisted server-side, not just in the client cache;
+  Vitest+Testing Library tests for the conflict-banner behavior and the
+  chaos duplicate-delivery card's before/after diff; a pure-function Vitest
+  suite for the SSE-span-to-flow-edge mapping logic (`lib/flowGraph.ts`).
+  CI: `.github/workflows/merchant-web.yml`.
+- Backend additions made to support phase 5 (see `docs/adr/0005-observability-ui.md`
+  for the full reasoning): `Span` (`tracing-core`'s `Span.kt` and
+  `pos-ingest/internal/tracing/tracing.go`) gained three additive, optional
+  fields — `idempotencyKey`, `kafkaPartition`, `retryCount` — populated only
+  at the call sites that naturally have them (`MenuEventConsumer`'s
+  `kafka.consume menu.events` span, `OutboxRelay`'s and pos-ingest's
+  `kafka.publish` spans). `Tracer.withSpan` (Kotlin) gained an optional
+  `attributes` parameter before its trailing lambda so every existing call
+  site kept compiling unchanged; Go's `WithSpan` has no default params, so
+  its `attrs *Attributes` parameter required updating every call site
+  explicitly. `trace-collector` gained `GET /consumer-lag` (via
+  `org.apache.kafka.clients.admin.AdminClient`, already on the classpath —
+  no new dependency) for the two consumer groups that exist today
+  (`availability-service` on `menu.events`, `trace-collector` on
+  `system.trace`, configured via `MONITORED_CONSUMER_GROUPS`), plus CORS
+  (previously had none — nothing called it directly from a browser before).
+  `availability-service` gained a `ChaosState` (in-process, guarded by a new
+  `CHAOS_ENABLED` env var, default false) wired into `MenuEventConsumer`
+  (pause/resume by skipping `consumer.poll` entirely, so lag genuinely
+  grows; duplicate-delivery replays the last raw record through the same
+  `handleEvent` path the poll loop uses) and `RedisAvailabilityStore`
+  (redis-unreachable throws before touching the `JedisPool`). `pos-ingest`'s
+  `worker.Pool` gained an `injectedLatency` applied before each venue poll,
+  controlled the same way. All `/chaos/*` routes 404 (not 403) when
+  `CHAOS_ENABLED` is false; `docker-compose.yml` sets it `true` for both
+  services since this repo has no production deployment.
 - Backend additions made to support the above (menu-service and
   availability-service had no wire contract for several things this phase's
   screens needed — see `docs/plan-phase4.md` section 0 for the full audit):
@@ -185,14 +226,23 @@ Working:
   still has no producer or consumer. pos-ingest gained
   `POST /sync-runs/{id}/retry`, re-polling the run's venue synchronously
   through the existing (now-exported) `Pool.PollVenueNow`.
-- CORS: all three services (menu-service, availability-service, pos-ingest)
-  now send CORS headers — found missing only once `merchant-web` was
-  smoke-tested against a live backend in an actual browser, which silently
-  blocked every cross-origin request. Allowed origin defaults to
-  `localhost:5173` (Vite's default dev port), overridable via
-  `CORS_ALLOWED_ORIGIN_HOST` (Kotlin services) / `CORS_ALLOWED_ORIGIN` (Go)
-  env vars, set explicitly in `docker-compose.yml`. No gateway/reverse-proxy
-  was introduced; each service answers CORS for itself.
+- CORS: all four services (menu-service, availability-service, pos-ingest,
+  and now trace-collector as of phase 5) send CORS headers — found missing
+  only once `merchant-web` was smoke-tested against a live backend in an
+  actual browser, which silently blocked every cross-origin request.
+  Allowed origin defaults to `localhost:5173` (Vite's default dev port),
+  overridable via `CORS_ALLOWED_ORIGIN_HOST` (Kotlin services) /
+  `CORS_ALLOWED_ORIGIN` (Go) env vars, set explicitly in
+  `docker-compose.yml`. No gateway/reverse-proxy was introduced; each
+  service answers CORS for itself.
+- Verified end-to-end via a live docker-compose run this phase: every
+  chaos endpoint exercised directly (duplicate-delivery correctly rejected
+  with unchanged item state, lag climbing while the consumer is paused and
+  draining after resume, Redis break/restore flipping the availability read
+  path between 200 and 500, pos-ingest latency injection round-tripping),
+  plus the actual browser UI driven via Playwright against the running
+  stack — confirmed real pulses, real lag numbers, and real trace
+  waterfalls with no console errors.
 
 Not built yet:
 - storefront-api
@@ -200,8 +250,7 @@ Not built yet:
   either. availability-service's manual-override endpoint (above) doesn't
   publish to `stock.events` either, since it doesn't exist — noted as a
   follow-up in ADR 0004 for when it does.
-- Flow diagram, trace timeline, chaos panel on merchant-web (phase 5).
-  Venue-creation/switching UI, category CRUD UI, pagination UI beyond
+- Venue-creation/switching UI, category CRUD UI, pagination UI beyond
   `pos-ingest`'s `limit` query param.
 - menu-service's `Prices` table (itemId, currency, amountCents,
   effectiveFrom) is still unused — item pricing is the new flat
@@ -229,3 +278,19 @@ Not built yet:
   broke `docker-compose up` for every service depending on Postgres, not
   just pos-ingest; fixed as part of this phase since it blocked verifying
   pos-ingest end-to-end
+- Chaos panel's "break Redis" simulates unreachability in-process (a flag
+  `RedisAvailabilityStore` checks before touching the `JedisPool`), not by
+  severing the actual docker-compose network path to the `redis` container
+  — deliberate, see ADR 0005's consequences section
+- Chaos panel's duplicate-delivery can only replay the *last* event
+  `MenuEventConsumer` processed (a single cached raw record, not a
+  history) — most legible right after a real menu change, per ADR 0005
+- `MONITORED_CONSUMER_GROUPS` (trace-collector's `/consumer-lag` source) is
+  static config, not auto-discovered — a future `pos.sync` or
+  `stock.events` consumer needs adding to it explicitly, same as
+  `pos-ingest/venues.json`'s static provider config
+- No sampling/backpressure on the SSE stream or the flow view — same
+  stance ADR 0003 already took for `system.trace` itself
+- `Span`'s new `idempotencyKey`/`kafkaPartition`/`retryCount` fields are
+  populated at only two call sites total (see ADR 0005) — every other span
+  leaves them null, which the trace timeline renders as `—`, not a guess

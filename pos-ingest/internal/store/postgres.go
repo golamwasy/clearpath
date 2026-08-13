@@ -65,7 +65,7 @@ func (s *Store) Ping(ctx context.Context) error {
 // StartRun inserts a sync_runs row with status=running and returns it.
 func (s *Store) StartRun(ctx context.Context, venueID, provider, correlationID string) (model.SyncRun, error) {
 	var run model.SyncRun
-	err := s.tracer.WithSpan(ctx, "db.commit sync_runs", func(ctx context.Context) error {
+	err := s.tracer.WithSpan(ctx, "db.commit sync_runs", nil, func(ctx context.Context) error {
 		run = model.SyncRun{
 			ID:            newUUID(),
 			VenueID:       venueID,
@@ -93,7 +93,7 @@ func (s *Store) FinishRun(ctx context.Context, runID string, status model.SyncSt
 		msg := syncErr.Error()
 		errText = &msg
 	}
-	err := s.tracer.WithSpan(ctx, "db.commit sync_runs", func(ctx context.Context) error {
+	err := s.tracer.WithSpan(ctx, "db.commit sync_runs", nil, func(ctx context.Context) error {
 		_, err := s.pool.Exec(ctx, `
 			UPDATE sync_runs
 			SET finished_at = $2, status = $3, items_changed = $4, error = $5

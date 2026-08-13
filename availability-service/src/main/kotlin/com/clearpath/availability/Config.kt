@@ -13,4 +13,5 @@ data class AppConfig(
     val mongoUri: String = System.getenv("MONGO_URI") ?: "mongodb://localhost:27017",
     val mongoDatabase: String = System.getenv("MONGO_DATABASE") ?: "availability",
     val httpPort: Int = System.getenv("AVAILABILITY_HTTP_PORT")?.toIntOrNull() ?: 8082,
+    val chaosEnabled: Boolean = System.getenv("CHAOS_ENABLED")?.toBoolean() ?: false,
 )

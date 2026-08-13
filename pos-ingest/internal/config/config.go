@@ -51,6 +51,10 @@ type Config struct {
 
 	Providers []ProviderConfig
 	Venues    []VenueConfig
+
+	// ChaosEnabled guards /chaos/* — default false, every chaos route 404s when it is. See
+	// docs/adr/0005-observability-ui.md.
+	ChaosEnabled bool
 }
 
 func Load() (Config, error) {
@@ -67,6 +71,7 @@ func Load() (Config, error) {
 		RetryBaseDelay:   getEnvDuration("POS_RETRY_BASE_DELAY", 200*time.Millisecond),
 		RetryMaxDelay:    getEnvDuration("POS_RETRY_MAX_DELAY", 10*time.Second),
 		HTTPTimeout:      getEnvDuration("POS_HTTP_TIMEOUT", 5*time.Second),
+		ChaosEnabled:     getEnvBool("CHAOS_ENABLED", false),
 	}
 
 	venuesPath := getEnv("POS_VENUES_CONFIG", "")
@@ -97,6 +102,15 @@ func getEnvInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func getEnvBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def
