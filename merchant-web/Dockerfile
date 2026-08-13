@@ -33,6 +33,9 @@ ENV VITE_MENU_API_URL=$VITE_MENU_API_URL \
 RUN npm run build
 
 FROM nginx:1.27-alpine
+# nginx:1.27-alpine's base Alpine packages lag behind upstream security fixes (e.g. libssl3/
+# libcrypto3 CVEs); upgrade in place so the CI vuln scan doesn't fail on a fixed-upstream CVE.
+RUN apk upgrade --no-cache
 RUN rm -rf /usr/share/nginx/html/*
 COPY merchant-web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/merchant-web/dist /usr/share/nginx/html
