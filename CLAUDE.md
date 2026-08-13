@@ -56,9 +56,90 @@ If you make a new structural decision, write a new ADR.
 
 ## Current state
 
-Phase: 5 (observability UI)
+Phase: 6 (deployability and observability)
 
 Working:
+- storefront-api (Kotlin/Ktor, new service, port 8085): one endpoint, `GET
+  /venues/{venueId}/menu`, composing menu-service's `GET
+  /venues/{venueId}/items` and availability-service's `GET
+  /venues/{venueId}/availability` (sequential calls, joined on `itemId`),
+  cached in Redis (`storefront:menu:{venueId}`,
+  `STOREFRONT_MENU_CACHE_TTL_SECONDS`, default 5s, cache-aside). Items with
+  no availability-service state yet are returned as `status: "unknown"`,
+  never defaulted or dropped. Correlation ID propagated to both upstream
+  calls; the composition is one `Tracer.withSpan`. Upstream/cache failures
+  surface as `502` via a `StatusPages` handler. No Postgres, no writes, no
+  new Kafka topic — matches its CLAUDE.md role ("Read composition, cache")
+  exactly; built this phase specifically so the deployability work below
+  had a genuine fifth JVM service to containerize and load-test, not a
+  placeholder (`docs/adr/0007-storefront-api-stub.md`).
+- Backward-compatible Kafka schema change demonstrated on `menu.events`:
+  menu-service's `MenuEvent` gained `itemName: String? = null` (populated at
+  all three event sites); availability-service's separate `MenuEvent` copy
+  was deliberately left unmodified to play the role of "the old consumer"
+  — safe because every consumer in this repo already sets
+  `ignoreUnknownKeys = true`. `WritePathIntegrationTest`'s existing
+  end-to-end assertion doubles as the automated proof (`itemName` isn't
+  consumed anywhere yet — it exists to prove the mechanism, per
+  `docs/adr/0006-schema-evolution-menu-events.md`, which also writes down
+  the general safe rollout order for additive fields).
+- Dockerfiles for all six custom images (menu-service, availability-service,
+  pos-ingest, storefront-api, trace-collector, merchant-web) hardened to
+  build on minimal base images and run as a created, unprivileged user
+  instead of root.
+- Kubernetes manifests (`deploy/k8s/`, kustomize, one `base/<service>/`
+  directory per service including Postgres/Redis/Mongo/Kafka/Prometheus/
+  Grafana): every application Deployment wired to `/health`/`/ready` via
+  `livenessProbe`/`readinessProbe`, with `resources.requests`/`limits` set.
+  `deploy/k8s/kind-up.sh`/`kind-down.sh` bring up a local `kind` cluster in
+  one command (builds all eight images, loads them directly into the
+  cluster, `imagePullPolicy: Never`, no registry pull). Infra runs
+  single-replica on `emptyDir` volumes — a disposable local demo, not a
+  durability story, called out explicitly in each manifest's comments and
+  in the README's "Trade-offs" section. No `Ingress`, `NetworkPolicy`,
+  `PodDisruptionBudget`, or `HorizontalPodAutoscaler`, and no pod-level
+  `securityContext` enforcing non-root at the k8s layer (the Dockerfiles
+  enforce it at the image layer, but nothing in the manifests would stop a
+  base-image change from silently regressing that) — not addressed this
+  phase. `deploy/k8s/base/secret-common.yaml` is a plaintext `Secret`
+  manifest, committed, explicitly commented as a local-only shortcut.
+- Real Prometheus metrics on `/metrics` for all five backend services
+  (previously a stub returning a placeholder on all of them) —
+  Micrometer-backed on the four Kotlin services, a hand-rolled exposition
+  writer on pos-ingest — plus `trace-collector`'s `/consumer-lag` gauge
+  also exposed as `kafka_consumer_lag` on its own `/metrics`. `deploy/
+  prometheus/` + `deploy/grafana/provisioning/` scrape every service and
+  provision one dashboard (`clearpath-dashboard.json`); both docker-compose
+  and the kind manifests bring up Prometheus + Grafana.
+- CI consolidated into a single `.github/workflows/ci.yml` (replacing the
+  phase 4/5 `merchant-web`-only workflow): lint, unit tests, the
+  Testcontainers integration suite, `merchant-web`'s build (OpenAPI
+  type-gen gate), Playwright e2e against live docker-compose, a container
+  build + Trivy vulnerability scan (severity `CRITICAL`, gating) for all
+  eight images, and a GHCR push on `main`. No Kotlin lint/format gate
+  (ktlint/detekt) added — the four JVM services' only static check remains
+  compilation, deliberately deferred (see README "Trade-offs").
+- k6 load test (`load-test/storefront-api.js`): 50 constant VUs, 2 minutes,
+  against storefront-api's one endpoint, single `venueId`, real numbers
+  from a real docker-compose run recorded in the README — explicitly
+  caveated as flattered by the cache (5s TTL against one venue means most
+  requests are Redis hits, not the real menu-service+availability-service
+  fan-out a cache-miss costs).
+- `merchant-web`'s `/system/flow` screen got legibility fixes (edges/pulses
+  hard to distinguish at rest) found while smoke-testing the kind
+  deployment end-to-end with a real browser.
+- README rewritten: problem statement, architecture, both setup paths
+  (docker-compose and kind), CI, the load test with its caveats, and a
+  "Trade-offs and what I'd do differently at scale" section enumerating
+  every known gap this phase didn't close.
+- ADRs: `docs/adr/0006-schema-evolution-menu-events.md`,
+  `docs/adr/0007-storefront-api-stub.md`. Full working plan in
+  `docs/plan-phase6.md`.
+- Note: this "Current state" section was not updated in the commit that
+  landed phase 6 — backfilled after the fact once the gap was flagged by an
+  external review. `docs/plan-phase6.md` was similarly missing and was
+  backfilled at the same time. Neither omission changed anything about the
+  phase 6 code itself.
 - menu-service: Postgres schema (venues, categories, items, modifiers,
   prices, outbox), optimistic locking on items via `version`, REST endpoints
   (create/update/delete/list items, create venue), transactional outbox
@@ -245,7 +326,6 @@ Working:
   waterfalls with no console errors.
 
 Not built yet:
-- storefront-api
 - stock.events topic and its consumers; no consumer exists for `pos.sync`
   either. availability-service's manual-override endpoint (above) doesn't
   publish to `stock.events` either, since it doesn't exist — noted as a
@@ -257,8 +337,6 @@ Not built yet:
   `items.price_cents` column instead (see `docs/plan-phase4.md` section 4.1
   for why: `Prices` has no version/optimistic-lock semantics and nothing
   routes to it).
-- /metrics on all four services (now including trace-collector) is a stub
-  (returns a placeholder, not real Prometheus output)
 - outbox table retention/cleanup job
 - No sampling on `system.trace` — every instrumented call emits a span
   unconditionally, and `trace-collector`'s span consumer isn't dedupe'd
@@ -294,3 +372,16 @@ Not built yet:
 - `Span`'s new `idempotencyKey`/`kafkaPartition`/`retryCount` fields are
   populated at only two call sites total (see ADR 0005) — every other span
   leaves them null, which the trace timeline renders as `—`, not a guess
+- No `Ingress`/`NetworkPolicy`/`PodDisruptionBudget`/`HorizontalPodAutoscaler`
+  in `deploy/k8s/`, and no pod-level `securityContext` enforcing non-root at
+  the k8s layer (only the Dockerfiles enforce it, at the image layer)
+- `storefront-api` has no test coverage of its own (composition/join logic,
+  `status: "unknown"` behavior, cache-aside path) — only the k6 run and
+  manual docker-compose/kind verification have exercised it
+- No Kotlin lint/format gate (ktlint/detekt) in CI — the four JVM services'
+  only static check is compilation; deliberately deferred this phase, see
+  README "Trade-offs"
+- `docs/` (every ADR, every `plan-phaseN.md`) has been `.gitignore`d since
+  the first commit — none of it is tracked in git, unlike CLAUDE.md itself,
+  which is. Anyone cloning fresh gets CLAUDE.md but none of the ADRs or
+  plans it references. Not addressed; flagged here rather than left silent
