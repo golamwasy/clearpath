@@ -32,12 +32,15 @@ export function Popover({ open, onClose, anchorRef, id, label, children }: Popov
     if (!anchor) return;
 
     const anchorRect = anchor.getBoundingClientRect();
+    const popoverWidth = popoverRef.current?.offsetWidth ?? 0;
     const popoverHeight = popoverRef.current?.offsetHeight ?? 0;
     const gap = 6;
+    const margin = 8;
     const fitsBelow = anchorRect.bottom + gap + popoverHeight <= window.innerHeight;
+    const left = Math.min(anchorRect.left, window.innerWidth - popoverWidth - margin);
 
     setStyle({
-      left: anchorRect.left,
+      left: Math.max(margin, left),
       top: fitsBelow ? anchorRect.bottom + gap : anchorRect.top - gap - popoverHeight,
     });
   }, [open, anchorRef]);
@@ -71,7 +74,7 @@ export function Popover({ open, onClose, anchorRef, id, label, children }: Popov
       aria-label={label}
       // Invisible until positioned, so it doesn't flash at (0,0) on the first paint.
       style={{ position: "fixed", top: style?.top ?? 0, left: style?.left ?? 0, visibility: style ? "visible" : "hidden" }}
-      className="z-50 w-60 rounded-lg border border-slate-200 bg-white p-3 shadow-lg"
+      className="z-50 w-[20rem] max-w-[90vw] rounded-lg border border-slate-200 bg-white p-3 shadow-lg"
     >
       {children}
     </div>,

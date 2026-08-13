@@ -58,7 +58,7 @@ export function VenueSwitcher() {
         <span aria-hidden="true" className="text-slate-400">▾</span>
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchorRef={triggerRef} id={popoverId} label="Switch venue">
-        <div className="flex min-w-[15rem] flex-col gap-1">
+        <div className="flex flex-col gap-1">
           <p className="px-1 pb-1 text-xs text-slate-500">
             {venues.length} {venues.length === 1 ? "venue" : "venues"} from menu-service
           </p>
@@ -67,7 +67,7 @@ export function VenueSwitcher() {
               key={v.id}
               type="button"
               onClick={() => pick(v.id)}
-              className={`rounded-md px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${
+              className={`w-full min-w-0 rounded-md px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${
                 v.id === venueId ? "bg-blue-50 font-medium text-blue-800" : "text-slate-700"
               }`}
             >
