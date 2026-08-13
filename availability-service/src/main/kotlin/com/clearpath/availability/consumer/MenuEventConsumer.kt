@@ -72,14 +72,20 @@ class MenuEventConsumer(
                         continue
                     }
                     val records = consumer.poll(Duration.ofMillis(500))
+                    var anyFailed = false
                     for (record in records) {
                         try {
                             processRecord(record.value(), record.partition())
                         } catch (e: Exception) {
+                            anyFailed = true
                             logger.error("failed to process record, will retry next poll", e)
                         }
                     }
-                    if (!records.isEmpty) {
+                    // Committing here would move the offset past a record that threw, so it would
+                    // never be redelivered. Skip the commit for the whole poll batch instead — the
+                    // records that did succeed are redelivered too on the next poll, but that's a
+                    // no-op thanks to markProcessedIfNew's dedupe.
+                    if (!records.isEmpty && !anyFailed) {
                         consumer.commitSync()
                     }
                 }
@@ -138,8 +144,24 @@ class MenuEventConsumer(
                 updatedAt = Instant.now().toString(),
             )
 
-            redisStore.put(state, ctx)
-            auditStore.append(event, status)
+            // markProcessedIfNew above is the dedupe gate, not proof the work is done — if the
+            // Redis/Mongo writes below throw, undo it so the event isn't left permanently
+            // "processed" with no state ever written (it'll be redelivered and retried, since the
+            // offset for this poll batch won't be committed either — see the poll loop above).
+            try {
+                redisStore.put(state, ctx)
+                auditStore.append(event, status)
+            } catch (e: Exception) {
+                try {
+                    idempotencyStore.unmarkProcessed(eventId, ctx)
+                } catch (rollbackError: Exception) {
+                    // The original e is still what a redelivery needs diagnosed (it's what
+                    // actually broke), so surface it, not this secondary failure — losing e here
+                    // would hide the real cause behind "couldn't roll back the rollback."
+                    e.addSuppressed(rollbackError)
+                }
+                throw e
+            }
 
             logger.info("processed event ${event.eventId} type=${event.eventType} item=${event.itemId}")
             EventOutcome(event.eventId, event.itemId, event.correlationId, accepted = true, reason = "processed")

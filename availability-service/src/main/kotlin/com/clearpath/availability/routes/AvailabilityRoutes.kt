@@ -4,9 +4,9 @@ import com.clearpath.availability.audit.MongoAuditStore
 import com.clearpath.availability.model.AvailabilityResponse
 import com.clearpath.availability.model.AvailabilityState
 import com.clearpath.availability.model.AvailabilityStatus
-import com.clearpath.availability.model.ErrorResponse
 import com.clearpath.availability.model.UpdateAvailabilityRequest
 import com.clearpath.availability.state.RedisAvailabilityStore
+import com.clearpath.tracing.ErrorResponse
 import com.clearpath.tracing.traceContext
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call

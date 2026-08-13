@@ -9,25 +9,20 @@ import com.clearpath.availability.routes.availabilityRoutes
 import com.clearpath.availability.routes.chaosRoutes
 import com.clearpath.availability.state.RedisAvailabilityStore
 import com.clearpath.tracing.Tracer
+import com.clearpath.tracing.installMetrics
+import com.clearpath.tracing.installStandardRoutes
 import com.clearpath.tracing.installTracing
 import com.mongodb.kotlin.client.coroutine.MongoClient
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
-import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
-import io.ktor.server.metrics.micrometer.MicrometerMetrics
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
-import io.ktor.server.response.respond
-import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
-import io.micrometer.core.instrument.distribution.DistributionStatisticConfig
-import io.micrometer.prometheusmetrics.PrometheusConfig
-import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import kotlinx.serialization.json.Json
 import redis.clients.jedis.JedisPool
 
@@ -59,13 +54,7 @@ fun Application.moduleWith(
     tracer: Tracer,
     chaosState: ChaosState,
 ) {
-    val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
-    install(MicrometerMetrics) {
-        this.registry = registry
-        distributionStatisticConfig = DistributionStatisticConfig.Builder()
-            .percentilesHistogram(true)
-            .build()
-    }
+    val registry = installMetrics()
 
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
@@ -88,11 +77,9 @@ fun Application.moduleWith(
 
     consumer.start(this)
 
-    routing {
-        get("/health") { call.respond(mapOf("status" to "ok")) }
-        get("/ready") { call.respond(mapOf("status" to "ok")) }
-        get("/metrics") { call.respond(registry.scrape()) }
+    installStandardRoutes(registry)
 
+    routing {
         availabilityRoutes(redisStore, auditStore)
         chaosRoutes(config, chaosState, consumer)
     }

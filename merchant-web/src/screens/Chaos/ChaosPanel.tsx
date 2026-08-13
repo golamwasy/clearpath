@@ -4,6 +4,7 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { InlineError } from "../../components/ui/InlineError";
+import { ApiError } from "../../api/client";
 import { useTraceStream } from "../../lib/traceStream";
 import {
   useAvailabilityChaosState,
@@ -31,6 +32,10 @@ function ChaosDisabledNotice({ service }: { service: string }) {
   return <InlineError>Chaos endpoints disabled on {service} (CHAOS_ENABLED=false).</InlineError>;
 }
 
+function isRecordWithReason(body: unknown): body is { reason: string } {
+  return typeof body === "object" && body !== null && typeof (body as { reason?: unknown }).reason === "string";
+}
+
 export function ChaosPanel() {
   const availabilityChaos = useAvailabilityChaosState();
   const posChaos = usePosChaosState();
@@ -51,18 +56,28 @@ export function ChaosPanel() {
     beforeItem?: AvailabilityState;
     afterItem?: AvailabilityState;
   } | null>(null);
+  const [duplicateDeliveryError, setDuplicateDeliveryError] = useState<string | null>(null);
 
   async function fireDuplicateDelivery() {
-    const beforeItems = availability.data?.items ?? [];
-    const response = await duplicateDelivery.mutateAsync();
-    await queryClient.refetchQueries({ queryKey: availabilityQueryKey(DEFAULT_VENUE_ID) });
-    const afterItems =
-      queryClient.getQueryData<AvailabilityResponse>(availabilityQueryKey(DEFAULT_VENUE_ID))?.items ?? [];
-    setDuplicateResult({
-      response,
-      beforeItem: beforeItems.find((i) => i.itemId === response.itemId),
-      afterItem: afterItems.find((i) => i.itemId === response.itemId),
-    });
+    setDuplicateDeliveryError(null);
+    try {
+      const beforeItems = availability.data?.items ?? [];
+      const response = await duplicateDelivery.mutateAsync();
+      await queryClient.refetchQueries({ queryKey: availabilityQueryKey(DEFAULT_VENUE_ID) });
+      const afterItems =
+        queryClient.getQueryData<AvailabilityResponse>(availabilityQueryKey(DEFAULT_VENUE_ID))?.items ?? [];
+      setDuplicateResult({
+        response,
+        beforeItem: beforeItems.find((i) => i.itemId === response.itemId),
+        afterItem: afterItems.find((i) => i.itemId === response.itemId),
+      });
+    } catch (e) {
+      // The 404 case (nothing processed yet this run) comes back with a structured
+      // `{ reason: "..." }` body worth showing verbatim — e.message would just be the generic
+      // "Request failed with status 404" ApiError's constructor defaults to.
+      const reason = e instanceof ApiError && isRecordWithReason(e.body) ? e.body.reason : undefined;
+      setDuplicateDeliveryError(reason ?? (e instanceof Error ? e.message : "Failed to fire duplicate delivery"));
+    }
   }
 
   const replaySpans = duplicateResult?.response.correlationId
@@ -161,6 +176,7 @@ export function ChaosPanel() {
             <Button variant="primary" onClick={fireDuplicateDelivery} disabled={duplicateDelivery.isPending}>
               Fire duplicate delivery
             </Button>
+            {duplicateDeliveryError && <InlineError>{duplicateDeliveryError}</InlineError>}
 
             {duplicateResult && (
               <div className="space-y-2 rounded-md bg-white p-3 text-sm">

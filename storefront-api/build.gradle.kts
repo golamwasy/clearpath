@@ -22,8 +22,8 @@ dependencies {
     implementation("io.ktor:ktor-server-call-logging:$ktorVersion")
     implementation("io.ktor:ktor-server-status-pages:$ktorVersion")
     implementation("io.ktor:ktor-server-cors:$ktorVersion")
-    implementation("io.ktor:ktor-server-metrics-micrometer:$ktorVersion")
-    implementation("io.micrometer:micrometer-registry-prometheus:1.13.6")
+    // ktor-server-metrics-micrometer / micrometer-registry-prometheus come transitively from
+    // tracing-core's installMetrics() — every Kotlin service here uses it.
 
     // outbound calls to menu-service/availability-service — this is the first service in the
     // repo that composes reads from other services rather than only handling inbound HTTP.

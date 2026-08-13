@@ -60,5 +60,10 @@ object Outbox : Table("outbox") {
     val correlationId = text("correlation_id")
     val createdAt = timestamp("created_at")
     val publishedAt = timestamp("published_at").nullable()
+    // Lets OutboxRelay claim a row (short transaction, releases its row lock immediately) before
+    // publishing to Kafka, instead of holding a transaction/JDBC connection open across that
+    // network call. A stale claim (relay crashed mid-publish) is reclaimable after a lease
+    // timeout — see OutboxRelay.CLAIM_LEASE.
+    val claimedAt = timestamp("claimed_at").nullable()
     override val primaryKey = PrimaryKey(id)
 }

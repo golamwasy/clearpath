@@ -40,6 +40,3 @@ data class UpdateAvailabilityRequest(
     val status: String,
     val soldOutUntil: String? = null,
 )
-
-@Serializable
-data class ErrorResponse(val error: String, val message: String)

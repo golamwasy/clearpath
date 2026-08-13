@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pos-ingest
+  namespace: clearpath
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: pos-ingest

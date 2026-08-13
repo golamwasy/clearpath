@@ -27,15 +27,25 @@ sealed class ItemWriteResult {
     data class VersionConflict(val current: ItemResponse?) : ItemWriteResult()
 }
 
+/**
+ * Narrower than [ItemWriteResult]: creating an item has no prior version to conflict with, so
+ * [create] can't produce [ItemWriteResult.VersionConflict] — this return type says so at compile
+ * time instead of leaving the route handler with an unreachable branch to interpret.
+ */
+sealed class ItemCreateResult {
+    data class Success(val item: ItemResponse) : ItemCreateResult()
+    object NotFound : ItemCreateResult()
+}
+
 class ItemRepository(private val db: Database, private val tracer: Tracer) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun create(venueId: UUID, request: CreateItemRequest, ctx: TraceContext): ItemWriteResult =
+    suspend fun create(venueId: UUID, request: CreateItemRequest, ctx: TraceContext): ItemCreateResult =
         tracer.withSpan(ctx, "db.commit items") {
             transaction(db) {
                 val venueExists = Venues.selectAll().where { Venues.id eq venueId }.limit(1).any()
-                if (!venueExists) return@transaction ItemWriteResult.NotFound
+                if (!venueExists) return@transaction ItemCreateResult.NotFound
 
                 val itemId = UUID.randomUUID()
                 val now = Instant.now()
@@ -63,7 +73,7 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                     itemName = request.name,
                 )
 
-                ItemWriteResult.Success(
+                ItemCreateResult.Success(
                     ItemResponse(
                         id = itemId.toString(),
                         venueId = venueId.toString(),

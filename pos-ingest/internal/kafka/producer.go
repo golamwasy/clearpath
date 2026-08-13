@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	segmentio "github.com/segmentio/kafka-go"
 
@@ -25,6 +26,16 @@ type Producer struct {
 	syncTopic  string
 	dlqTopic   string
 	tracer     *tracing.Tracer
+
+	// pendingPartitions correlates a PublishSync call to the partition Kafka actually assigned
+	// it. segmentio/kafka-go's Writer.WriteMessages never writes the chosen partition back onto
+	// the caller's Message struct — the balancer's choice is only ever used internally — so this
+	// reads it off the Writer's Completion callback instead, which segmentio's own docs guarantee
+	// carries the real assigned partition and (for a synchronous, non-Async writer, which this is)
+	// fires before WriteMessages returns. Completion is one function shared across every
+	// concurrent WriteMessages call on syncWriter, so entries are keyed by correlationID (unique
+	// per poll) to match each completion back to the call that's waiting on it.
+	pendingPartitions sync.Map // correlationID string -> chan int
 }
 
 func NewProducer(brokers []string, syncTopic, dlqTopic string, tracer *tracing.Tracer) *Producer {
@@ -37,13 +48,43 @@ func NewProducer(brokers []string, syncTopic, dlqTopic string, tracer *tracing.T
 			AllowAutoTopicCreation: true,
 		}
 	}
-	return &Producer{
+	p := &Producer{
 		syncWriter: newWriter(syncTopic),
 		dlqWriter:  newWriter(dlqTopic),
 		syncTopic:  syncTopic,
 		dlqTopic:   dlqTopic,
 		tracer:     tracer,
 	}
+	p.syncWriter.Completion = p.completeSync
+	return p
+}
+
+// completeSync is segmentio's Completion callback for syncWriter, invoked once per produced
+// batch (all messages in one call share the same assigned partition). It hands that partition
+// back to whichever PublishSync call is waiting on it, matched by the correlationId header.
+func (p *Producer) completeSync(messages []segmentio.Message, _ error) {
+	for _, m := range messages {
+		correlationID := headerValue(m.Headers, correlationIDHeaderKey)
+		if correlationID == "" {
+			continue
+		}
+		chVal, ok := p.pendingPartitions.LoadAndDelete(correlationID)
+		if !ok {
+			continue
+		}
+		ch := chVal.(chan int)
+		ch <- m.Partition
+		close(ch)
+	}
+}
+
+func headerValue(headers []segmentio.Header, key string) string {
+	for _, h := range headers {
+		if h.Key == key {
+			return string(h.Value)
+		}
+	}
+	return ""
 }
 
 // PublishSync publishes a normalized sync run to pos.sync, keyed by venue ID.
@@ -63,10 +104,18 @@ func (p *Producer) PublishSync(ctx context.Context, envelope model.SyncEnvelope,
 				{Key: correlationIDHeaderKey, Value: []byte(envelope.CorrelationID)},
 			},
 		}}
+
+		partitionCh := make(chan int, 1)
+		p.pendingPartitions.Store(envelope.CorrelationID, partitionCh)
+
 		if err := p.syncWriter.WriteMessages(ctx, msgs...); err != nil {
+			p.pendingPartitions.Delete(envelope.CorrelationID)
 			return fmt.Errorf("publish pos.sync: %w", err)
 		}
-		partition := msgs[0].Partition
+
+		// WriteMessages on a synchronous (non-Async) writer blocks until Completion has already
+		// run, so completeSync has already sent on this channel by the time we get here.
+		partition := <-partitionCh
 		attrs.KafkaPartition = &partition
 		return nil
 	})

@@ -18,9 +18,9 @@ func TestNormalizeFlat(t *testing.T) {
 			wantItems: 1,
 		},
 		{
-			name:      "decimal price with more than 2 decimal places truncates",
-			body:      `[{"id":4471,"name":"Cheeseburger","price":"12.999","available":1}]`,
-			wantItems: 1,
+			name:    "decimal price with more than 2 decimal places is rejected, not truncated",
+			body:    `[{"id":4471,"name":"Cheeseburger","price":"12.999","available":1}]`,
+			wantErr: ErrMalformedPayload,
 		},
 		{
 			name:      "price missing decimal point treated as whole dollars",
@@ -81,7 +81,6 @@ func TestNormalizeFlat_PriceConversion(t *testing.T) {
 		{"12.99", 1299},
 		{"8.9", 890},
 		{"3", 300},
-		{"12.999", 1299},
 		{"0.05", 5},
 	}
 	for _, c := range cases {
@@ -92,5 +91,11 @@ func TestNormalizeFlat_PriceConversion(t *testing.T) {
 		if got != c.want {
 			t.Errorf("decimalStringToCents(%q) = %d, want %d", c.price, got, c.want)
 		}
+	}
+}
+
+func TestNormalizeFlat_PriceConversion_RejectsExtraFractionalDigits(t *testing.T) {
+	if _, err := decimalStringToCents("12.999"); err == nil {
+		t.Fatal("expected an error for a price with more than 2 fractional digits, got nil")
 	}
 }

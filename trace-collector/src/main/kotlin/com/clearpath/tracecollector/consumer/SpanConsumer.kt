@@ -41,14 +41,19 @@ class SpanConsumer(
             try {
                 while (isActive) {
                     val records = consumer.poll(Duration.ofMillis(500))
+                    var anyFailed = false
                     for (record in records) {
                         try {
                             processRecord(record.value())
                         } catch (e: Exception) {
+                            anyFailed = true
                             logger.error("failed to process span record, will retry next poll", e)
                         }
                     }
-                    if (!records.isEmpty) {
+                    // Skip the commit for the whole batch if anything failed, so the offset never
+                    // advances past a record that was never actually stored — matches the fix in
+                    // availability-service's MenuEventConsumer.
+                    if (!records.isEmpty && !anyFailed) {
                         consumer.commitSync()
                     }
                 }

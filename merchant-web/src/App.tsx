@@ -8,6 +8,7 @@ import { TraceList } from "./screens/TraceTimeline/TraceList";
 import { TraceWaterfall } from "./screens/TraceTimeline/TraceWaterfall";
 import { ChaosPanel } from "./screens/Chaos/ChaosPanel";
 import { TraceStreamProvider } from "./lib/traceStream";
+import { useLastWriteCorrelationId } from "./lib/correlationTracking";
 
 const DEFAULT_VENUE_ID = import.meta.env.VITE_DEFAULT_VENUE_ID ?? "";
 
@@ -24,11 +25,20 @@ function navClass({ isActive }: { isActive: boolean }) {
  */
 function FlowSidebar() {
   const location = useLocation();
+  const lastWriteCorrelationId = useLastWriteCorrelationId();
   if (location.pathname === "/system/flow") return null;
 
   return (
     <aside className="hidden w-[420px] shrink-0 border-l border-slate-200 bg-white px-4 py-6 lg:block">
       <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">System flow</h2>
+      {lastWriteCorrelationId && (
+        <NavLink
+          to={`/system/traces/${lastWriteCorrelationId}`}
+          className="mb-3 block rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+        >
+          View trace of last change →
+        </NavLink>
+      )}
       <FlowDiagram variant="sidebar" />
     </aside>
   );

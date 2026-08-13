@@ -2,12 +2,13 @@ package com.clearpath.menu.routes
 
 import com.clearpath.menu.model.ConflictResponse
 import com.clearpath.menu.model.CreateItemRequest
-import com.clearpath.menu.model.ErrorResponse
 import com.clearpath.menu.model.UpdateItemRequest
 import com.clearpath.menu.model.VenueRequest
 import com.clearpath.menu.model.VenueResponse
+import com.clearpath.menu.repository.ItemCreateResult
 import com.clearpath.menu.repository.ItemRepository
 import com.clearpath.menu.repository.ItemWriteResult
+import com.clearpath.tracing.ErrorResponse
 import com.clearpath.tracing.traceContext
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
@@ -36,12 +37,8 @@ fun Route.itemRoutes(repository: ItemRepository) {
                 val request = call.receive<CreateItemRequest>()
 
                 when (val result = repository.create(venueId, request, call.traceContext)) {
-                    is ItemWriteResult.Success -> call.respond(HttpStatusCode.Created, result.item)
-                    is ItemWriteResult.NotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("not_found", "venue not found"))
-                    is ItemWriteResult.VersionConflict -> call.respond(
-                        HttpStatusCode.Conflict,
-                        ConflictResponse("version_conflict", "unexpected", result.current),
-                    )
+                    is ItemCreateResult.Success -> call.respond(HttpStatusCode.Created, result.item)
+                    is ItemCreateResult.NotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("not_found", "venue not found"))
                 }
             }
 

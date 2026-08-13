@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: merchant-web
+  namespace: clearpath
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: merchant-web

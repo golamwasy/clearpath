@@ -1,0 +1,304 @@
+# Least-privilege pod-to-pod segmentation: default-deny ingress, then one allow rule per
+# actual caller relationship (derived from CLAUDE.md's service table + configmap-common.yaml's
+# wiring, not guessed). Two important caveats, called out here rather than left silent (same
+# spirit as this repo's other "Trade-offs" documentation):
+#
+# 1. kind's default CNI (kindnet) does not enforce NetworkPolicy at all — on the local kind
+#    cluster these manifests stand up, every one of these rules is a no-op today. They document
+#    and are ready for the intended segmentation on any cluster with a policy-enforcing CNI
+#    (Calico, Cilium, etc.), which is the realistic production case this repo doesn't otherwise
+#    model.
+# 2. merchant-web's screens call menu-service, availability-service, pos-ingest, and
+#    trace-collector directly from the browser (no gateway — see docs/plan-phase4.md section 3),
+#    reached in local dev via `kubectl port-forward`, not through another pod. Pod-to-pod
+#    NetworkPolicy selectors can't reliably describe "traffic that arrived via port-forward" (it's
+#    CNI- and setup-dependent whether that traffic is even distinguishable from node-local
+#    traffic), so those four services' allow rules include an explicit all-sources rule on their
+#    app port to preserve today's direct-browser-access architecture instead of guessing at a
+#    selector that might silently break it.
+# 3. kubelet's own liveness/readiness/startup probes connect to a pod's IP directly, from the
+#    node, not from another pod — a `podSelector`-scoped rule can't describe that source either.
+#    Every service below whose probes share their app's only port (kafka, nested-pos, flat-pos,
+#    storefront-api — see each Deployment's httpGet/tcpSocket probes) allows all sources on that
+#    port for the same reason as caveat 2, or kubelet's own health checks would be the first thing
+#    a policy-enforcing CNI breaks. postgres/redis/mongo's probes are `exec` (in-container, e.g.
+#    `pg_isready`), so they cross no network path and aren't affected — those three keep a real
+#    restricted allow-list.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: clearpath
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: menu-service
+        - podSelector:
+            matchLabels:
+              app: availability-service
+        - podSelector:
+            matchLabels:
+              app: pos-ingest
+      ports:
+        - port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: availability-service
+        - podSelector:
+            matchLabels:
+              app: storefront-api
+      ports:
+        - port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mongo-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: mongo
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: availability-service
+        - podSelector:
+            matchLabels:
+              app: trace-collector
+      ports:
+        - port: 27017
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: kafka
+  policyTypes:
+    - Ingress
+  ingress:
+    # Every backend service publishes to system.trace (tracing-core / pos-ingest's own tracer), on
+    # top of each service's own topic-specific produce/consume traffic, so all five are legitimate
+    # callers on 9092 — but so is kubelet's own tcpSocket startup/liveness/readiness probe (see
+    # kafka/deployment.yaml), which isn't expressible as a podSelector (caveat 3 at the top of this
+    # file), so 9092 allows all sources rather than breaking Kafka's own health checks. Port 9093
+    # (the KRaft controller listener) isn't opened to any pod at all: kafka/configmap.yaml pins
+    # KAFKA_CONTROLLER_QUORUM_VOTERS to localhost because this is a single-node broker+controller
+    # that only ever needs to reach itself on that port.
+    - ports:
+        - port: 9092
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nested-pos-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: nested-pos
+  policyTypes:
+    - Ingress
+  ingress:
+    # pos-ingest's polling is the real caller, but kubelet's own httpGet liveness/readiness probe
+    # (see nested-pos/deployment.yaml) shares the same port and can't be scoped to a podSelector
+    # (caveat 3 at the top of this file) — so this allows all sources on 9001 rather than breaking
+    # this mock's own health checks.
+    - ports:
+        - port: 9001
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flat-pos-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: flat-pos
+  policyTypes:
+    - Ingress
+  ingress:
+    # Same reasoning as nested-pos-allow: kubelet's httpGet probe shares port 9002 with
+    # pos-ingest's actual polling traffic and can't be scoped to a podSelector.
+    - ports:
+        - port: 9002
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: menu-service-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: menu-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # storefront-api's composition read is a real pod-to-pod caller, but the browser's own direct
+    # calls (menu editor) can't be scoped to a selector — see the all-sources caveat at the top of
+    # this file — so this allows all sources rather than silently breaking that access path.
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: availability-service-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: availability-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # storefront-api's composition read plus direct browser access (availability board, chaos
+    # panel) — see the all-sources caveat at the top of this file.
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pos-ingest-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: pos-ingest
+  policyTypes:
+    - Ingress
+  ingress:
+    # Direct browser access only (sync status screen, chaos latency injection, retry) — see the
+    # all-sources caveat at the top of this file.
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: trace-collector-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: trace-collector
+  policyTypes:
+    - Ingress
+  ingress:
+    # Direct browser access (SSE trace stream, trace/waterfall reads, consumer-lag) plus
+    # prometheus's /metrics scrape — see the all-sources caveat at the top of this file.
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: storefront-api-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: storefront-api
+  policyTypes:
+    - Ingress
+  ingress:
+    # Not called by merchant-web today (see api/client.ts's ServiceName union — storefront-api
+    # isn't in it), so prometheus's /metrics scrape would otherwise be this service's only real
+    # caller — but /health and /ready (kubelet's liveness/readiness probes) share port 8085 with
+    # /metrics and can't be scoped to a podSelector (caveat 3 at the top of this file), so this
+    # allows all sources on 8085 rather than breaking storefront-api's own health checks.
+    - ports:
+        - port: 8085
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: merchant-web-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: merchant-web
+  policyTypes:
+    - Ingress
+  ingress:
+    # Reached via `kubectl port-forward svc/merchant-web` (kind-up.sh), i.e. from outside the
+    # pod network — same all-sources case as the direct-browser-access services above.
+    - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    # grafana's queries are the real pod-to-pod caller; also reached directly via
+    # `kubectl port-forward svc/prometheus` (kind-up.sh) — the second (all-sources) rule already
+    # covers the first, but both are listed so the intended caller is documented, not just the
+    # permissive fallback.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: grafana
+      ports:
+        - port: 9090
+    - ports:
+        - port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-allow
+  namespace: clearpath
+spec:
+  podSelector:
+    matchLabels:
+      app: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    # Reached via `kubectl port-forward svc/grafana` (kind-up.sh).
+    - {}

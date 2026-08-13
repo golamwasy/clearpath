@@ -15,10 +15,20 @@ spec:
       labels:
         app: pos-ingest
     spec:
+      # The Dockerfile already sets USER app (non-root); this is defense-in-depth at the k8s
+      # layer so a base-image change that silently reintroduces root doesn't go unnoticed.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: pos-ingest
           image: pos-ingest:local
           imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8083
           envFrom:

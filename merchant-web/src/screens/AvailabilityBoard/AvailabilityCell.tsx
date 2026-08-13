@@ -21,7 +21,10 @@ export function AvailabilityCell({ itemLabel, state, onChange, disabled }: Avail
   const untilInputId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  const status = state?.status ?? "in_stock";
+  // No availability-service row yet is a distinct, real state ("unknown"), not "in stock" — see
+  // CLAUDE.md invariant 4 and storefront-api's identical ADR 0007 handling of this same race.
+  // Defaulting it to a green "in stock" badge would tell the merchant something false.
+  const status: AvailabilityStatus | "unknown" = state?.status ?? "unknown";
 
   function apply(next: AvailabilityStatus) {
     if (next === "sold_out_until") {
@@ -94,7 +97,8 @@ export function AvailabilityCell({ itemLabel, state, onChange, disabled }: Avail
   );
 }
 
-function StatusBadge({ status, soldOutUntil }: { status: AvailabilityStatus; soldOutUntil?: string | null }) {
+function StatusBadge({ status, soldOutUntil }: { status: AvailabilityStatus | "unknown"; soldOutUntil?: string | null }) {
+  if (status === "unknown") return <Badge tone="neutral">Unknown</Badge>;
   if (status === "in_stock") return <Badge tone="success">In stock</Badge>;
   if (status === "sold_out_until") {
     return <Badge tone="warning">Sold out until {formatDateTime(soldOutUntil)}</Badge>;

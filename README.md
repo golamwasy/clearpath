@@ -149,6 +149,19 @@ Grafana. Ports:
 Open `http://localhost:5173` for the UI, `http://localhost:3000` for
 Grafana (the "clearpath overview" dashboard is provisioned automatically).
 
+menu-service has no seed data, so `merchant-web`'s menu/availability nav
+links and the chaos panel's duplicate-delivery before/after diff need a
+real venue to point at. Create one and tell the frontend about it:
+
+```
+curl -X POST http://localhost:8081/venues -H 'Content-Type: application/json' \
+  -d '{"name": "Test Venue"}'
+# copy the returned "id" into merchant-web/.env (gitignored, not
+# merchant-web/.env.example) as VITE_DEFAULT_VENUE_ID=<that id>, then
+# restart `npm run dev` (or rebuild the merchant-web image) so Vite picks
+# it up — it's baked in at build time, not read at runtime.
+```
+
 ### One-command local Kubernetes (kind)
 
 ```

@@ -31,6 +31,9 @@ class SpanStore(database: MongoDatabase) {
             .append("status", span.status)
             .append("error", span.error)
             .append("root", span.root)
+            .append("idempotencyKey", span.idempotencyKey)
+            .append("kafkaPartition", span.kafkaPartition)
+            .append("retryCount", span.retryCount)
         collection.insertOne(doc)
     }
 
@@ -86,5 +89,8 @@ class SpanStore(database: MongoDatabase) {
         status = getString("status"),
         error = getString("error"),
         root = getBoolean("root"),
+        idempotencyKey = getString("idempotencyKey"),
+        kafkaPartition = getInteger("kafkaPartition"),
+        retryCount = getInteger("retryCount"),
     )
 }

@@ -1,7 +1,7 @@
 package com.clearpath.storefront.routes
 
-import com.clearpath.storefront.model.ErrorResponse
 import com.clearpath.storefront.service.MenuCompositionService
+import com.clearpath.tracing.ErrorResponse
 import com.clearpath.tracing.traceContext
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call

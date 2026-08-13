@@ -1,0 +1,15 @@
+# Meaningful once this Deployment runs more than one replica (it runs one today, a disposable
+# local-demo choice — see kustomization.yaml's header comment and the README's "Trade-offs"
+# section). Declared now so voluntary-disruption behavior (node drains, kubectl rollout, cluster
+# upgrades) is governed by policy from day one rather than added as an afterthought once replicas
+# increase.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: menu-service
+  namespace: clearpath
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: menu-service

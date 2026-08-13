@@ -11,6 +11,7 @@ resources:
   - namespace.yaml
   - configmap-common.yaml
   - secret-common.yaml
+  - network-policies.yaml
 
   - postgres/service.yaml
   - postgres/deployment.yaml
@@ -24,17 +25,22 @@ resources:
 
   - menu-service/service.yaml
   - menu-service/deployment.yaml
+  - menu-service/poddisruptionbudget.yaml
   - availability-service/configmap.yaml
   - availability-service/service.yaml
   - availability-service/deployment.yaml
+  - availability-service/poddisruptionbudget.yaml
   - trace-collector/configmap.yaml
   - trace-collector/service.yaml
   - trace-collector/deployment.yaml
+  - trace-collector/poddisruptionbudget.yaml
   - storefront-api/service.yaml
   - storefront-api/deployment.yaml
+  - storefront-api/poddisruptionbudget.yaml
   - pos-ingest/configmap.yaml
   - pos-ingest/service.yaml
   - pos-ingest/deployment.yaml
+  - pos-ingest/poddisruptionbudget.yaml
   - nested-pos/configmap.yaml
   - nested-pos/service.yaml
   - nested-pos/deployment.yaml
@@ -43,6 +49,7 @@ resources:
   - flat-pos/deployment.yaml
   - merchant-web/service.yaml
   - merchant-web/deployment.yaml
+  - merchant-web/poddisruptionbudget.yaml
 
   - prometheus/configmap.yaml
   - prometheus/service.yaml

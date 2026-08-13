@@ -224,6 +224,10 @@ services:
         VITE_AVAILABILITY_API_URL: http://localhost:8082
         VITE_POS_API_URL: http://localhost:8083
         VITE_TRACE_API_URL: http://localhost:8084
+        # Unset by default — menu-service has no seed data, so there's no venue id valid across
+        # environments. Export VITE_DEFAULT_VENUE_ID (or put it in a repo-root .env) before
+        # `docker compose up --build` once you've created a venue — see README's Setup section.
+        VITE_DEFAULT_VENUE_ID: ${VITE_DEFAULT_VENUE_ID:-}
     depends_on:
       - menu-service
       - availability-service

@@ -75,6 +75,11 @@ func (p *FlatProvider) FetchVenueMenu(ctx context.Context, venueID string) ([]mo
 	return normalizeFlat(venueID, currency, body)
 }
 
+// One malformed item (including a price with more than 2 fractional digits — see
+// decimalStringToCents) fails the whole venue's batch rather than skipping just that item, so a
+// single bad price silently truncated is never included, at the cost of also holding back the
+// rest of that venue's otherwise-good items until the POS payload itself is fixed. Deliberate:
+// correctness on money data beats partial availability here.
 func normalizeFlat(venueID, currency string, body []byte) ([]model.NormalizedItem, error) {
 	var raw []flatItem
 	dec := json.NewDecoder(bytes.NewReader(body))
@@ -135,7 +140,10 @@ func decimalStringToCents(price string) (int64, error) {
 		case 2:
 			// exact
 		default:
-			frac = frac[:2]
+			// More than 2 fractional digits isn't a rounding decision this parser gets to make
+			// silently — "12.999" truncating to "12.99" is exactly the "quietly wrong" money bug
+			// avoiding float64 was supposed to prevent. Reject it as malformed instead.
+			return 0, fmt.Errorf("more than 2 fractional digits")
 		}
 	} else {
 		frac = "00"

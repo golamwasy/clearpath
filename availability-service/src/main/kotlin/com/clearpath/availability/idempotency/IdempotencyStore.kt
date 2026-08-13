@@ -5,6 +5,8 @@ import com.clearpath.tracing.TraceContext
 import com.clearpath.tracing.Tracer
 import org.jetbrains.exposed.exceptions.ExposedSQLException
 import org.jetbrains.exposed.sql.Database
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.Instant
@@ -29,7 +31,34 @@ class IdempotencyStore(private val db: Database, private val tracer: Tracer) {
                 }
                 true
             } catch (e: ExposedSQLException) {
-                false
+                // Only a genuine unique-constraint violation (Postgres SQLState 23505) means "this
+                // event really was already processed." Any other SQL error here (connection drop,
+                // deadlock, disk full, ...) is a transient failure, not a duplicate — treating it
+                // as "already processed" would make handleEvent skip the event as a no-op offset
+                // gets committed for it, without ever writing to Redis/Mongo. Rethrowing instead
+                // lets the poll loop's failure handling (no commit, redelivery) take over.
+                if (e.sqlState == UNIQUE_VIOLATION_SQLSTATE) {
+                    false
+                } else {
+                    throw e
+                }
             }
         }
+
+    /**
+     * Compensating action for when the Redis/Mongo work after [markProcessedIfNew] throws: undoes
+     * the insert so the event is no longer "processed" and a future redelivery retries it, instead
+     * of the event being permanently marked done with no state ever actually written.
+     */
+    suspend fun unmarkProcessed(eventId: UUID, ctx: TraceContext) {
+        tracer.withSpan(ctx, "db.rollback processed_events") {
+            transaction(db) {
+                ProcessedEvents.deleteWhere { ProcessedEvents.eventId eq eventId }
+            }
+        }
+    }
+
+    companion object {
+        private const val UNIQUE_VIOLATION_SQLSTATE = "23505"
+    }
 }

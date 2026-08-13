@@ -88,6 +88,10 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	_ = httpServer.Shutdown(shutdownCtx)
+
+	// Wait for any venue-poll goroutines already in flight when cancel() fired, bounded by the
+	// same shutdown deadline, so a sync_runs row doesn't get abandoned at status=running.
+	pool.Wait(shutdownCtx)
 }
 
 func buildProviders(cfg config.Config) (map[string]provider.Provider, error) {

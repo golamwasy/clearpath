@@ -17,10 +17,15 @@ ARG VITE_MENU_API_URL=http://localhost:8081
 ARG VITE_AVAILABILITY_API_URL=http://localhost:8082
 ARG VITE_POS_API_URL=http://localhost:8083
 ARG VITE_TRACE_API_URL=http://localhost:8084
+# No default: menu-service has no seed data, so there's no venue id that's valid across
+# environments. Left empty, the nav links and chaos panel just have nothing to point at yet — see
+# README's Setup section for creating one and passing it through here.
+ARG VITE_DEFAULT_VENUE_ID=
 ENV VITE_MENU_API_URL=$VITE_MENU_API_URL \
     VITE_AVAILABILITY_API_URL=$VITE_AVAILABILITY_API_URL \
     VITE_POS_API_URL=$VITE_POS_API_URL \
-    VITE_TRACE_API_URL=$VITE_TRACE_API_URL
+    VITE_TRACE_API_URL=$VITE_TRACE_API_URL \
+    VITE_DEFAULT_VENUE_ID=$VITE_DEFAULT_VENUE_ID
 
 # This is the "fail the build on the frontend type generation check" gate: gen:api regenerates
 # types from the openapi.yaml files copied in above, and tsc -b fails the build if generated

@@ -50,6 +50,3 @@ data class StorefrontMenuItem(
 
 @Serializable
 data class StorefrontMenuResponse(val venueId: String, val items: List<StorefrontMenuItem>)
-
-@Serializable
-data class ErrorResponse(val error: String, val message: String)

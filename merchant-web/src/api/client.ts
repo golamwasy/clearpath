@@ -6,7 +6,12 @@
  * non-2xx response into a typed error the caller can inspect.
  */
 
+import { newCorrelationId, recordWriteCorrelationId } from "../lib/correlationTracking";
+
 export type ServiceName = "menu" | "availability" | "pos" | "trace";
+
+/** Same header name every backend service's tracing-core reads on the way in. */
+const CORRELATION_ID_HEADER = "X-Correlation-Id";
 
 const BASE_URLS: Record<ServiceName, string> = {
   menu: import.meta.env.VITE_MENU_API_URL ?? "http://localhost:8081",
@@ -59,11 +64,22 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
+  const method = options.method ?? "GET";
+  // Every request carries a correlation ID (CLAUDE.md invariant 3) — the frontend is the actual
+  // origin of the trace, so it generates one rather than leaving it to the first backend hop.
+  const correlationId = newCorrelationId();
+  const headers: Record<string, string> = { [CORRELATION_ID_HEADER]: correlationId };
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+
   const res = await fetch(buildUrl(service, path, options.query), {
-    method: options.method ?? "GET",
-    headers: options.body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    method,
+    headers,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
+
+  if (method !== "GET") {
+    recordWriteCorrelationId(correlationId);
+  }
 
   if (res.status === 204) {
     return undefined as T;

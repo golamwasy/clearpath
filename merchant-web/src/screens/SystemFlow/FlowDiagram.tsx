@@ -38,19 +38,30 @@ function edgeColor(status: EdgeStatus | null) {
 export function FlowDiagram({ variant }: { variant: "sidebar" | "full" }) {
   const { spans, connected } = useTraceStream();
   const { data: lag } = useConsumerLag();
-  const mapperRef = useRef(new FlowEdgeMapper());
-  const processedCount = useRef(0);
+  // useRef(new FlowEdgeMapper()) would construct a new FlowEdgeMapper on every render (only the
+  // first render's value is ever kept) — that's pure waste every render, and this component's own
+  // requestAnimationFrame loop re-renders it up to ~60 times/second while any pulse is animating.
+  const mapperRef = useRef<FlowEdgeMapper>();
+  if (!mapperRef.current) mapperRef.current = new FlowEdgeMapper();
+  // Tracks the last-processed span by ID, not by array length: traceStream's ring buffer stays at
+  // a fixed 200 entries once full (old spans drop off the front as new ones arrive), so comparing
+  // lengths alone stops detecting "new" spans the moment the buffer fills — the diagram would
+  // otherwise silently freeze forever in any reasonably active session.
+  const lastProcessedSpanId = useRef<string | null>(null);
   const [pulses, setPulses] = useState<Pulse[]>([]);
   const [, setTick] = useState(0);
   const rafRef = useRef<number>();
 
   useEffect(() => {
-    if (spans.length <= processedCount.current) {
-      processedCount.current = spans.length;
-      return;
-    }
-    const newSpans = spans.slice(processedCount.current);
-    processedCount.current = spans.length;
+    if (spans.length === 0) return;
+    const lastIndex = lastProcessedSpanId.current
+      ? spans.findIndex((s) => s.spanId === lastProcessedSpanId.current)
+      : -1;
+    // lastIndex === -1 covers both "first run" and "the last span we saw already fell out of the
+    // ring buffer" — in both cases, everything currently in the buffer is new to us.
+    const newSpans = lastIndex === -1 ? spans : spans.slice(lastIndex + 1);
+    lastProcessedSpanId.current = spans[spans.length - 1].spanId;
+    if (newSpans.length === 0) return;
     const newPulses: Pulse[] = [];
     for (const span of newSpans) {
       for (const edge of mapperRef.current.edgesForSpan(span)) {

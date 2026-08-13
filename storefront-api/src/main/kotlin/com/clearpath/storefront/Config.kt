@@ -11,4 +11,8 @@ data class AppConfig(
     // truth; freshness matters more than hit rate at this phase. See docs/adr/0007.
     val menuCacheTtlSeconds: Long = System.getenv("STOREFRONT_MENU_CACHE_TTL_SECONDS")?.toLongOrNull() ?: 5,
     val httpPort: Int = System.getenv("STOREFRONT_HTTP_PORT")?.toIntOrNull() ?: 8085,
+    // Bounds how long a slow (not down) upstream can hang a composed request — without this, a
+    // sequential menu-service+availability-service call chain can block indefinitely instead of
+    // ever reaching the 502 ADR 0007 documents.
+    val upstreamTimeoutMs: Long = System.getenv("STOREFRONT_UPSTREAM_TIMEOUT_MS")?.toLongOrNull() ?: 3000,
 )

@@ -42,9 +42,6 @@ data class ItemResponse(
 )
 
 @Serializable
-data class ErrorResponse(val error: String, val message: String)
-
-@Serializable
 data class ConflictResponse(val error: String, val message: String, val current: ItemResponse?)
 
 @Serializable
