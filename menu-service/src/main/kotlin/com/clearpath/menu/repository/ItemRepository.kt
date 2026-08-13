@@ -7,11 +7,13 @@ import com.clearpath.menu.model.CreateItemRequest
 import com.clearpath.menu.model.ItemResponse
 import com.clearpath.menu.model.MenuEvent
 import com.clearpath.menu.model.UpdateItemRequest
+import com.clearpath.menu.model.VenueSummary
 import com.clearpath.tracing.TraceContext
 import com.clearpath.tracing.Tracer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.Database
+import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
@@ -233,6 +235,23 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
     /** Rows the relay hasn't published yet — the outbox backlog depth metric. See docs on /metrics. */
     fun outboxBacklogCount(): Long = transaction(db) {
         Outbox.selectAll().where { Outbox.publishedAt.isNull() }.count()
+    }
+
+    /**
+     * Every venue, newest first. No pagination: venues are created by hand in this system (there's
+     * no bulk import path), so the row count is bounded by operator effort, not by traffic. If that
+     * ever changes this needs a limit/cursor before it's a read-path hazard.
+     */
+    fun listVenues(): List<VenueSummary> = transaction(db) {
+        Venues.selectAll()
+            .orderBy(Venues.createdAt to SortOrder.DESC)
+            .map {
+                VenueSummary(
+                    id = it[Venues.id].toString(),
+                    name = it[Venues.name],
+                    createdAt = it[Venues.createdAt].toString(),
+                )
+            }
     }
 
     fun createVenue(name: String): String = transaction(db) {

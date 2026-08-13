@@ -56,9 +56,57 @@ If you make a new structural decision, write a new ADR.
 
 ## Current state
 
-Phase: 6 (deployability and observability)
+Phase: 7 (demo legibility)
 
 Working:
+- `GET /venues` on menu-service (`listVenues`, newest first, unpaginated —
+  venues are operator-created, so the row count is bounded by effort not
+  traffic). Added because merchant-web had no way to *discover* a venue:
+  venue id came from the build-time `VITE_DEFAULT_VENUE_ID`, which
+  `docker-compose.yml` leaves unset, so the default demo build's Menu and
+  Availability links resolved to `/venues//menu` — no route match, blank
+  white pane, no error, and no in-app way to create a venue. Covered by a
+  new ordering assertion in `WritePathIntegrationTest`.
+- `merchant-web` restructured around the demo narrative (ADR 0008): a new
+  `/` overview (what the system is, live `/health` per service, venue setup
+  that runs the real write path), nav regrouped as **Operate** / **Observe**
+  instead of six equal tabs, full-width shell (the old `max-w-6xl` minus a
+  fixed 420px sidebar left ~400px of content on a 1440px screen and clipped
+  wide tables), and a `RequireVenue` guard so a venue-less URL explains
+  itself instead of rendering nothing.
+- Guided five-step tour (`lib/tourProgress.ts`, pure + unit-tested;
+  `components/Tour/`). Steps complete on *observation*, never on clicks:
+  step 3 needs spans from two distinct services under one correlation ID, so
+  it cannot pass unless a message really crossed Kafka. Survives reload by
+  re-reading `GET /traces/{correlationId}` (polled — a trace fetched at write
+  time is still filling in) for an ID mirrored in `sessionStorage`.
+  `e2e/guided-tour.spec.ts` walks all five against the live stack.
+- Flow diagram redrawn as a directed pipeline with datastores and topics
+  (Postgres/Redis/Mongo/`menu.events`/`pos.sync`), arrowheads, mechanism
+  labels, curved routing for the few cross-cutting hops, and telemetry
+  demoted below a divider. `kafka.publish` is drawn leaving Postgres, not the
+  service, because the relay publishes a committed outbox row. Uninstrumented
+  but real hops (the Mongo audit append) are dashed and captioned as never
+  pulsing rather than omitted. `flowGraph.test.ts` asserts every span a real
+  write emits maps to a drawn edge, and that no uninstrumented edge can pulse.
+- `SourceTag` / `InvariantBadge` / `EmptyState` primitives: every data region
+  names the service and store it came from and how fresh it is, the four
+  CLAUDE.md invariants are marked on the exact element that demonstrates
+  them, and every empty state says why it is empty and what fills it.
+- Two real defects found and fixed while building the above:
+  `useVenueAvailability` never refetched (the near-real-time half of
+  invariant 4 could sit indefinitely on a stale answer — now polled at 3s,
+  labelled as polled since `stock.events` has no producer to subscribe to),
+  and `useReorderItems` destructured a `PromiseFulfilledResult` instead of
+  its `.value`, so the compensating-write rollback after a partial reorder
+  failure threw instead of compensating. The latter was a pre-existing type
+  error that `npm run build` was already failing on.
+- Chaos mutations are flagged `isControlPlane` and excluded from "your last
+  change" — firing a duplicate delivery used to silently repoint the sidebar
+  link, and every tour step derived from it, at the chaos request.
+- ADR: `docs/adr/0008-demo-legibility-ia.md`.
+
+From phase 6 and earlier:
 - storefront-api (Kotlin/Ktor, new service, port 8085): one endpoint, `GET
   /venues/{venueId}/menu`, composing menu-service's `GET
   /venues/{venueId}/items` and availability-service's `GET
@@ -326,6 +374,22 @@ Working:
   waterfalls with no console errors.
 
 Not built yet:
+- storefront-api sends no CORS headers, so merchant-web cannot call it. It is
+  on the flow diagram (fed by an explicitly-drawn external client, since its
+  inbound HTTP spans come from k6/curl, not this browser) but deliberately
+  absent from the overview's service-health panel — a permanently red dot
+  would report a broken service that is fine. Giving it CORS and a health
+  tile is the obvious follow-up.
+- storefront-api's two upstream composition calls are not instrumented, so
+  they are not drawn as edges at all (unlike the Mongo audit append, which is
+  drawn dashed). Instrumenting them would let the diagram show the read path.
+- The guided tour's observation cache is per-tab `sessionStorage` and
+  deliberately not durable — clearing the tab resets progress. It
+  under-reports rather than over-reports, which is the correct failure
+  direction, but it does mean a fresh browser shows an incomplete tour on a
+  system that has done all five things.
+- Venue *deletion* has no endpoint or UI, so a demo stack accumulates venues;
+  `GET /venues` returns all of them unpaginated.
 - stock.events topic and its consumers; no consumer exists for `pos.sync`
   either. availability-service's manual-override endpoint (above) doesn't
   publish to `stock.events` either, since it doesn't exist — noted as a

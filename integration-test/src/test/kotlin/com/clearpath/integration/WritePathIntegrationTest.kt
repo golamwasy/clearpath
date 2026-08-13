@@ -18,13 +18,16 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.testcontainers.containers.KafkaContainer
 import org.testcontainers.containers.MongoDBContainer
 import org.testcontainers.containers.PostgreSQLContainer
@@ -167,5 +170,67 @@ class WritePathIntegrationTest {
         assertEquals(venueId, availabilityJson["venueId"]!!.jsonPrimitive.content)
         assertEquals(itemId, availabilityJson["itemId"]!!.jsonPrimitive.content)
         assertEquals("in_stock", availabilityJson["status"]!!.jsonPrimitive.content, "expected item to be in stock")
+    }
+
+    /**
+     * `GET /venues` is what lets merchant-web's venue switcher discover venues at all — before it
+     * existed the frontend could only reach a venue whose id had been baked into a build-time env
+     * var, which is why the default docker-compose demo had no reachable menu screen.
+     *
+     * Asserts newest-first ordering explicitly: the switcher relies on it to preselect the venue an
+     * operator just created, and an unordered `selectAll()` would pass a weaker "both are present"
+     * assertion while quietly breaking that.
+     */
+    @Test
+    fun `GET venues lists created venues newest first`() {
+        val before = listVenueIds()
+
+        val first = createVenue("Ordering Test A")
+        // Venues are ordered by created_at; Instant.now() is microsecond-resolution on Linux but
+        // can tie on a coarser clock, which would make the assertion below flaky rather than wrong.
+        Thread.sleep(10)
+        val second = createVenue("Ordering Test B")
+
+        val after = listVenueIds()
+        assertEquals(before.size + 2, after.size, "both new venues should be listed")
+
+        val firstIndex = after.indexOf(first)
+        val secondIndex = after.indexOf(second)
+        assertNotEquals(-1, firstIndex, "first venue missing from GET /venues")
+        assertNotEquals(-1, secondIndex, "second venue missing from GET /venues")
+        assertTrue(secondIndex < firstIndex, "newer venue should sort before older one (newest first)")
+
+        val listResponse = httpClient.send(
+            HttpRequest.newBuilder().uri(URI.create("http://localhost:$MENU_HTTP_PORT/venues")).GET().build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+        val entry = json.parseToJsonElement(listResponse.body()).jsonArray
+            .first { it.jsonObject["id"]!!.jsonPrimitive.content == second }
+            .jsonObject
+        assertEquals("Ordering Test B", entry["name"]!!.jsonPrimitive.content)
+        assertNotNull(entry["createdAt"], "createdAt must be present — the switcher orders on it")
+    }
+
+    private fun createVenue(name: String): String {
+        val response = httpClient.send(
+            HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:$MENU_HTTP_PORT/venues"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("""{"name":"$name"}"""))
+                .build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+        assertEquals(201, response.statusCode(), "venue creation failed: ${response.body()}")
+        return json.parseToJsonElement(response.body()).jsonObject["id"]!!.jsonPrimitive.content
+    }
+
+    private fun listVenueIds(): List<String> {
+        val response = httpClient.send(
+            HttpRequest.newBuilder().uri(URI.create("http://localhost:$MENU_HTTP_PORT/venues")).GET().build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+        assertEquals(200, response.statusCode(), "venue listing failed: ${response.body()}")
+        return json.parseToJsonElement(response.body()).jsonArray
+            .map { it.jsonObject["id"]!!.jsonPrimitive.content }
     }
 }

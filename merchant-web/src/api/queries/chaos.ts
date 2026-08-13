@@ -35,7 +35,7 @@ export function usePosChaosState() {
 function useAvailabilityChaosAction(path: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => apiRequest<AvailabilityChaosState>("availability", path, { method: "POST" }),
+    mutationFn: () => apiRequest<AvailabilityChaosState>("availability", path, { method: "POST", isControlPlane: true }),
     onSuccess: (state) => queryClient.setQueryData(availabilityChaosKey, state),
   });
 }
@@ -60,7 +60,7 @@ export function useRestoreRedis() {
 export function useDuplicateDelivery(venueId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => apiRequest<DuplicateDeliveryResponse>("availability", "/chaos/duplicate-delivery", { method: "POST" }),
+    mutationFn: () => apiRequest<DuplicateDeliveryResponse>("availability", "/chaos/duplicate-delivery", { method: "POST", isControlPlane: true }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: availabilityQueryKey(venueId) });
     },
@@ -70,7 +70,7 @@ export function useDuplicateDelivery(venueId: string) {
 export function useSetPosLatency() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (ms: number) => apiRequest<PosChaosState>("pos", "/chaos/latency", { method: "POST", body: { ms } }),
+    mutationFn: (ms: number) => apiRequest<PosChaosState>("pos", "/chaos/latency", { method: "POST", body: { ms }, isControlPlane: true }),
     onSuccess: (state) => queryClient.setQueryData(posChaosKey, state),
   });
 }

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Badge } from "../../components/ui/Badge";
 import { Spinner } from "../../components/ui/Spinner";
 import { InlineError } from "../../components/ui/InlineError";
 import { useTrace, type Span } from "../../api/queries/traces";
+import { recordTraceViewed } from "../../lib/tourObservations";
 
 function fieldOrDash(value: string | number | null | undefined) {
   return value === null || value === undefined ? "—" : String(value);
@@ -12,8 +13,17 @@ function fieldOrDash(value: string | number | null | undefined) {
 
 export function TraceWaterfall() {
   const { correlationId = "" } = useParams<{ correlationId: string }>();
-  const { data: spans, isLoading, isError, error } = useTrace(correlationId);
+  // Same reason as the tour: a trace opened the instant a write is made is still filling in.
+  const { data: spans, isLoading, isError, error } = useTrace(correlationId, { refetchIntervalMs: 3000 });
   const [expandedSpanId, setExpandedSpanId] = useState<string | null>(null);
+
+  // Recorded only once trace-collector has actually returned spans for this correlation ID — the
+  // tour's step 4 is gated on the fetch succeeding, not on the route being visited, so navigating
+  // here while trace-collector is down correctly leaves the step incomplete.
+  const traceLoaded = Boolean(spans && spans.length > 0);
+  useEffect(() => {
+    if (traceLoaded && correlationId) recordTraceViewed(correlationId);
+  }, [traceLoaded, correlationId]);
 
   if (isLoading) return <Spinner label="Loading trace" />;
   if (isError) return <InlineError>Failed to load trace: {(error as Error).message}</InlineError>;

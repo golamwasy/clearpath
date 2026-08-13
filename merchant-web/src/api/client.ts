@@ -47,6 +47,11 @@ interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined>;
+  /**
+   * Set on requests that mutate system behaviour rather than merchant data (the chaos endpoints),
+   * so they don't get recorded as "the change you just made". See correlationTracking.
+   */
+  isControlPlane?: boolean;
 }
 
 function buildUrl(service: ServiceName, path: string, query?: RequestOptions["query"]): string {
@@ -77,7 +82,7 @@ export async function apiRequest<T>(
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
 
-  if (method !== "GET") {
+  if (method !== "GET" && !options.isControlPlane) {
     recordWriteCorrelationId(correlationId);
   }
 

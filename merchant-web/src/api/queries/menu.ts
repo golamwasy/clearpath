@@ -109,7 +109,10 @@ export function useReorderItems(venueId: string) {
 
       if (failures.length > 0) {
         const compensated = await Promise.allSettled(
-          succeeded.map(({ original, updated }) =>
+          // `succeeded` holds PromiseFulfilledResult wrappers, so the pair is under `.value` —
+          // destructuring the wrapper directly yielded two undefineds and threw on `original.id`,
+          // silently breaking the compensating-write rollback this whole branch exists to perform.
+          succeeded.map(({ value: { original, updated } }) =>
             apiRequest<ItemResponse>("menu", `/venues/${venueId}/items/${original.id}`, {
               method: "PUT",
               body: {

@@ -8,6 +8,14 @@ data class VenueRequest(val name: String)
 @Serializable
 data class VenueResponse(val id: String, val name: String)
 
+/**
+ * Listing shape for `GET /venues`. Carries `createdAt` (which the create response has no reason to
+ * echo back) so a client can order venues by age without a second call — the frontend's venue
+ * switcher shows most-recent-first.
+ */
+@Serializable
+data class VenueSummary(val id: String, val name: String, val createdAt: String)
+
 @Serializable
 data class CreateItemRequest(
     val categoryId: String? = null,

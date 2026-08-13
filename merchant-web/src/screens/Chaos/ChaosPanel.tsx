@@ -6,6 +6,10 @@ import { Badge } from "../../components/ui/Badge";
 import { InlineError } from "../../components/ui/InlineError";
 import { ApiError } from "../../api/client";
 import { useTraceStream } from "../../lib/traceStream";
+import { useCurrentVenue } from "../../lib/venueSelection";
+import { recordDuplicateDelivery } from "../../lib/tourObservations";
+import { SourceTag } from "../../components/ui/SourceTag";
+import { InvariantBadge } from "../../components/ui/InvariantBadge";
 import {
   useAvailabilityChaosState,
   usePosChaosState,
@@ -25,7 +29,6 @@ import {
   type AvailabilityState,
 } from "../../api/queries/availability";
 
-const DEFAULT_VENUE_ID = import.meta.env.VITE_DEFAULT_VENUE_ID ?? "";
 const LATENCY_PRESET_MS = 3000;
 
 function ChaosDisabledNotice({ service }: { service: string }) {
@@ -37,6 +40,11 @@ function isRecordWithReason(body: unknown): body is { reason: string } {
 }
 
 export function ChaosPanel() {
+  // Venue now comes from menu-service's venue list rather than a build-time env var, so the
+  // duplicate-delivery before/after diff has a real venue to read item state from even on a stack
+  // that was set up in this browser session.
+  const { venueId } = useCurrentVenue();
+  const currentVenueId = venueId ?? "";
   const availabilityChaos = useAvailabilityChaosState();
   const posChaos = usePosChaosState();
   const pauseConsumer = usePauseConsumer();
@@ -44,12 +52,12 @@ export function ChaosPanel() {
   const breakRedis = useBreakRedis();
   const restoreRedis = useRestoreRedis();
   const setPosLatency = useSetPosLatency();
-  const duplicateDelivery = useDuplicateDelivery(DEFAULT_VENUE_ID);
+  const duplicateDelivery = useDuplicateDelivery(currentVenueId);
   const queryClient = useQueryClient();
   const { spans } = useTraceStream();
   // Mounted so there's an active observer to snapshot before/after against — not rendered
   // directly, this screen only shows the diff for the one item the replay touched.
-  const availability = useVenueAvailability(DEFAULT_VENUE_ID);
+  const availability = useVenueAvailability(currentVenueId);
 
   const [duplicateResult, setDuplicateResult] = useState<{
     response: DuplicateDeliveryResponse;
@@ -63,13 +71,17 @@ export function ChaosPanel() {
     try {
       const beforeItems = availability.data?.items ?? [];
       const response = await duplicateDelivery.mutateAsync();
-      await queryClient.refetchQueries({ queryKey: availabilityQueryKey(DEFAULT_VENUE_ID) });
+      await queryClient.refetchQueries({ queryKey: availabilityQueryKey(currentVenueId) });
       const afterItems =
-        queryClient.getQueryData<AvailabilityResponse>(availabilityQueryKey(DEFAULT_VENUE_ID))?.items ?? [];
-      setDuplicateResult({
-        response,
-        beforeItem: beforeItems.find((i) => i.itemId === response.itemId),
-        afterItem: afterItems.find((i) => i.itemId === response.itemId),
+        queryClient.getQueryData<AvailabilityResponse>(availabilityQueryKey(currentVenueId))?.items ?? [];
+      const beforeItem = beforeItems.find((i) => i.itemId === response.itemId);
+      const afterItem = afterItems.find((i) => i.itemId === response.itemId);
+      setDuplicateResult({ response, beforeItem, afterItem });
+      // availability-service's real verdict, forwarded to the tour. Both halves matter: a rejected
+      // replay that still mutated state would be a failed guarantee, not a passed one.
+      recordDuplicateDelivery({
+        accepted: response.accepted,
+        stateUnchanged: beforeItem?.status === afterItem?.status,
       });
     } catch (e) {
       // The 404 case (nothing processed yet this run) comes back with a structured
@@ -88,90 +100,37 @@ export function ChaosPanel() {
     <div className="space-y-6">
       <PageHeader
         title="Chaos panel"
-        subtitle="Backend-real fault injection, guarded by CHAOS_ENABLED. Nothing here is simulated in the UI."
+        subtitle={
+          <>
+            Every control here mutates real state inside the running service that owns it — the
+            consumer really stops polling, Redis really starts refusing, latency is really injected
+            into the poll loop. There is no simulation in this browser, which is why the failures look
+            like failures everywhere else in the app while they are switched on.
+          </>
+        }
+        source={<SourceTag origin="availability-service + pos-ingest" freshness="CHAOS_ENABLED" />}
       />
 
-      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Pause menu.events consumer</h2>
+      <section className="space-y-3 rounded-xl border-2 border-blue-300 bg-blue-50/60 p-5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+            Start here
+          </span>
+          <h2 className="text-base font-semibold text-slate-900">Force a duplicate delivery</h2>
+          <InvariantBadge n={2} />
+        </div>
+        <p className="max-w-prose text-sm text-slate-600">
+          Kafka guarantees at-least-once delivery, so every consumer will eventually see the same
+          message twice. This replays the last raw menu.events record byte-for-byte through the exact
+          path the poll loop uses — the dedupe table rejects it, and item state does not move.
+        </p>
         {isChaosDisabled(availabilityChaos.error) ? (
           <ChaosDisabledNotice service="availability-service" />
         ) : (
           <>
             <p className="text-sm text-slate-500">
-              Current: <Badge tone={availabilityChaos.data?.consumerPaused ? "warning" : "success"}>
-                {availabilityChaos.data?.consumerPaused ? "paused" : "running"}
-              </Badge>{" "}
-              — watch consumer lag climb on the flow view while paused.
-            </p>
-            <div className="flex gap-2">
-              <Button onClick={() => pauseConsumer.mutate()} disabled={pauseConsumer.isPending}>
-                Pause
-              </Button>
-              <Button onClick={() => resumeConsumer.mutate()} disabled={resumeConsumer.isPending}>
-                Resume
-              </Button>
-            </div>
-          </>
-        )}
-      </section>
-
-      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Break Redis</h2>
-        {isChaosDisabled(availabilityChaos.error) ? (
-          <ChaosDisabledNotice service="availability-service" />
-        ) : (
-          <>
-            <p className="text-sm text-slate-500">
-              Current: <Badge tone={availabilityChaos.data?.redisUnreachable ? "danger" : "success"}>
-                {availabilityChaos.data?.redisUnreachable ? "unreachable" : "reachable"}
-              </Badge>{" "}
-              — the Availability screen's reads/writes will error while broken.
-            </p>
-            <div className="flex gap-2">
-              <Button variant="danger" onClick={() => breakRedis.mutate()} disabled={breakRedis.isPending}>
-                Break
-              </Button>
-              <Button onClick={() => restoreRedis.mutate()} disabled={restoreRedis.isPending}>
-                Restore
-              </Button>
-            </div>
-          </>
-        )}
-      </section>
-
-      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Inject pos-ingest latency</h2>
-        {isChaosDisabled(posChaos.error) ? (
-          <ChaosDisabledNotice service="pos-ingest" />
-        ) : (
-          <>
-            <p className="text-sm text-slate-500">
-              Current: <Badge tone={(posChaos.data?.latencyMs ?? 0) > 0 ? "warning" : "success"}>
-                {posChaos.data?.latencyMs ?? 0}ms
-              </Badge>{" "}
-              delay before each venue poll.
-            </p>
-            <div className="flex gap-2">
-              <Button onClick={() => setPosLatency.mutate(LATENCY_PRESET_MS)} disabled={setPosLatency.isPending}>
-                Inject {LATENCY_PRESET_MS}ms
-              </Button>
-              <Button onClick={() => setPosLatency.mutate(0)} disabled={setPosLatency.isPending}>
-                Clear
-              </Button>
-            </div>
-          </>
-        )}
-      </section>
-
-      <section className="space-y-3 rounded-xl border-2 border-blue-200 bg-blue-50/40 p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Force duplicate delivery (headline case)</h2>
-        {isChaosDisabled(availabilityChaos.error) ? (
-          <ChaosDisabledNotice service="availability-service" />
-        ) : (
-          <>
-            <p className="text-sm text-slate-500">
-              Replays the last raw menu.events record this consumer processed through the same
-              idempotency-checked path. Make a menu change first, then fire this.
+              Only the <em>last</em> record the consumer processed can be replayed (it caches one raw
+              record, not a history), so this reads most clearly right after a real menu change.
             </p>
             <Button variant="primary" onClick={fireDuplicateDelivery} disabled={duplicateDelivery.isPending}>
               Fire duplicate delivery
@@ -204,6 +163,82 @@ export function ChaosPanel() {
                 )}
               </div>
             )}
+          </>
+        )}
+      </section>
+
+      <h2 className="pt-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+        Other faults you can inject
+      </h2>
+
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="text-sm font-semibold text-slate-900">Pause menu.events consumer</h3>
+        {isChaosDisabled(availabilityChaos.error) ? (
+          <ChaosDisabledNotice service="availability-service" />
+        ) : (
+          <>
+            <p className="text-sm text-slate-500">
+              Current: <Badge tone={availabilityChaos.data?.consumerPaused ? "warning" : "success"}>
+                {availabilityChaos.data?.consumerPaused ? "paused" : "running"}
+              </Badge>{" "}
+              — watch consumer lag climb on the flow view while paused.
+            </p>
+            <div className="flex gap-2">
+              <Button onClick={() => pauseConsumer.mutate()} disabled={pauseConsumer.isPending}>
+                Pause
+              </Button>
+              <Button onClick={() => resumeConsumer.mutate()} disabled={resumeConsumer.isPending}>
+                Resume
+              </Button>
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="text-sm font-semibold text-slate-900">Break Redis</h3>
+        {isChaosDisabled(availabilityChaos.error) ? (
+          <ChaosDisabledNotice service="availability-service" />
+        ) : (
+          <>
+            <p className="text-sm text-slate-500">
+              Current: <Badge tone={availabilityChaos.data?.redisUnreachable ? "danger" : "success"}>
+                {availabilityChaos.data?.redisUnreachable ? "unreachable" : "reachable"}
+              </Badge>{" "}
+              — the Availability screen's reads/writes will error while broken.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="danger" onClick={() => breakRedis.mutate()} disabled={breakRedis.isPending}>
+                Break
+              </Button>
+              <Button onClick={() => restoreRedis.mutate()} disabled={restoreRedis.isPending}>
+                Restore
+              </Button>
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h3 className="text-sm font-semibold text-slate-900">Inject pos-ingest latency</h3>
+        {isChaosDisabled(posChaos.error) ? (
+          <ChaosDisabledNotice service="pos-ingest" />
+        ) : (
+          <>
+            <p className="text-sm text-slate-500">
+              Current: <Badge tone={(posChaos.data?.latencyMs ?? 0) > 0 ? "warning" : "success"}>
+                {posChaos.data?.latencyMs ?? 0}ms
+              </Badge>{" "}
+              delay before each venue poll.
+            </p>
+            <div className="flex gap-2">
+              <Button onClick={() => setPosLatency.mutate(LATENCY_PRESET_MS)} disabled={setPosLatency.isPending}>
+                Inject {LATENCY_PRESET_MS}ms
+              </Button>
+              <Button onClick={() => setPosLatency.mutate(0)} disabled={setPosLatency.isPending}>
+                Clear
+              </Button>
+            </div>
           </>
         )}
       </section>

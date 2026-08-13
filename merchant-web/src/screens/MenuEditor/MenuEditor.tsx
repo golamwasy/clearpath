@@ -5,6 +5,10 @@ import { Table, THead, TBody, Th } from "../../components/ui/Table";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { InlineError } from "../../components/ui/InlineError";
 import { Spinner } from "../../components/ui/Spinner";
+import { SourceTag } from "../../components/ui/SourceTag";
+import { InvariantBadge } from "../../components/ui/InvariantBadge";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Link } from "react-router-dom";
 import { ItemRow } from "./ItemRow";
 import {
   isConflict,
@@ -96,9 +100,12 @@ export function MenuEditor() {
         subtitle={
           <>
             {sorted.length} {sorted.length === 1 ? "item" : "items"} · click a price to edit, use the
-            arrows to reorder
+            arrows to reorder. Each edit commits the item row and an outbox row in one transaction,
+            then the relay publishes to menu.events.{" "}
+            <InvariantBadge n={1} />
           </>
         }
+        source={<SourceTag origin="menu-service · Postgres" freshness="on load" />}
       />
       <Table>
         <THead>
@@ -128,7 +135,20 @@ export function MenuEditor() {
           ))}
         </TBody>
       </Table>
-      {sorted.length === 0 && <p className="text-sm text-slate-500">No items yet for this venue.</p>}
+      {sorted.length === 0 && (
+        <EmptyState
+          title="This venue has no items"
+          reason="menu-service has this venue but no item rows under it, so there is nothing to price or reorder — and nothing for availability-service to hear about."
+          fills="Creating an item is a write: one Postgres transaction, one outbox row, one menu.events publish. You will see it cross the flow diagram."
+          action={
+            <Link to="/">
+              <span className="text-sm font-medium text-blue-700 hover:underline">
+                Set up a venue with a sample menu →
+              </span>
+            </Link>
+          }
+        />
+      )}
     </div>
   );
 }

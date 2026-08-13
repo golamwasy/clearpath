@@ -1,38 +1,122 @@
 import { useEffect, useRef, useState } from "react";
 import { useTraceStream } from "../../lib/traceStream";
 import { useConsumerLag } from "../../api/queries/lag";
-import { FLOW_NODES, FLOW_VIEWBOX, FlowEdgeMapper, nodeById, type EdgeStatus, type FlowEdgeEvent, type NodeId } from "../../lib/flowGraph";
+import {
+  FLOW_EDGES,
+  FLOW_NODES,
+  FLOW_VIEWBOX,
+  FlowEdgeMapper,
+  TELEMETRY_DIVIDER_Y,
+  edgeFor,
+  nodeById,
+  type EdgeStatus,
+  type FlowEdge,
+  type FlowEdgeEvent,
+  type FlowNode,
+} from "../../lib/flowGraph";
 
 interface Pulse extends FlowEdgeEvent {
   startedAt: number;
   durationMs: number;
 }
 
-const MIN_PULSE_MS = 400;
-const MAX_PULSE_MS = 2000;
+const MIN_PULSE_MS = 500;
+const MAX_PULSE_MS = 2200;
 /** Error pulses stop partway rather than completing — this is how far along the edge they get. */
 const ERROR_STOP_PROGRESS = 0.55;
+
+const COLOR = {
+  ok: "#2563eb",
+  error: "#dc2626",
+  idle: "#cbd5e1",
+  telemetry: "#cbd5e1",
+  uninstrumented: "#e2e8f0",
+};
+
+/** Half-extents of a node box, in viewBox units. Edges stop at the box, not at its centre. */
+const NODE_HALF_W = 58;
+const NODE_HALF_H = 18;
 
 function pulseDuration(latencyMs: number) {
   return Math.min(MAX_PULSE_MS, Math.max(MIN_PULSE_MS, latencyMs));
 }
 
-const STATIC_EDGES: Array<{ id: string; from: NodeId; to: NodeId }> = [
-  { id: "web-menu", from: "merchant-web", to: "menu-service" },
-  { id: "web-availability", from: "merchant-web", to: "availability-service" },
-  { id: "web-pos", from: "merchant-web", to: "pos-ingest" },
-  { id: "web-storefront", from: "merchant-web", to: "storefront-api" },
-  { id: "menu-availability", from: "menu-service", to: "availability-service" },
-  { id: "menu-collector", from: "menu-service", to: "trace-collector" },
-  { id: "availability-collector", from: "availability-service", to: "trace-collector" },
-  { id: "pos-collector", from: "pos-ingest", to: "trace-collector" },
-  { id: "storefront-collector", from: "storefront-api", to: "trace-collector" },
-];
+interface EdgeGeometry {
+  path: string;
+  /** Point along the edge at 0..1, used for the pulse dot and for label placement. */
+  pointAt: (t: number) => { x: number; y: number };
+}
 
-function edgeColor(status: EdgeStatus | null) {
-  if (status === "error") return "#dc2626";
-  if (status === "ok") return "#2563eb";
-  return "#cbd5e1";
+/** Distance from a node's centre to its box border along a given direction. */
+function insetFor(dx: number, dy: number) {
+  const length = Math.hypot(dx, dy) || 1;
+  const tX = Math.abs(dx) > 0.001 ? NODE_HALF_W / Math.abs(dx / length) : Infinity;
+  const tY = Math.abs(dy) > 0.001 ? NODE_HALF_H / Math.abs(dy / length) : Infinity;
+  return Math.min(tX, tY);
+}
+
+/**
+ * Builds an edge as a straight line, or as a quadratic bezier bowed perpendicular to it when the
+ * edge declares a `curve`. Endpoints are pulled back to each node's box border so arrowheads land
+ * on the border rather than disappearing underneath the box they point at.
+ */
+function edgeGeometry(from: FlowNode, to: FlowNode, curve: number | undefined): EdgeGeometry {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.hypot(dx, dy) || 1;
+
+  if (!curve) {
+    const ux = dx / length;
+    const uy = dy / length;
+    const start = { x: from.x + ux * insetFor(dx, dy), y: from.y + uy * insetFor(dx, dy) };
+    const endInset = insetFor(dx, dy) + 5;
+    const end = { x: to.x - ux * endInset, y: to.y - uy * endInset };
+    return {
+      path: `M ${start.x} ${start.y} L ${end.x} ${end.y}`,
+      pointAt: (t) => ({ x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t }),
+    };
+  }
+
+  // Control point: the midpoint, pushed along the edge's perpendicular.
+  const control = {
+    x: (from.x + to.x) / 2 + (-dy / length) * curve,
+    y: (from.y + to.y) / 2 + (dx / length) * curve,
+  };
+  // Trim along each end's own tangent, which for a quadratic is the direction to/from the control
+  // point — not the straight-line direction, which would leave a visible gap on a strong bow.
+  const startDir = { x: control.x - from.x, y: control.y - from.y };
+  const endDir = { x: to.x - control.x, y: to.y - control.y };
+  const startLen = Math.hypot(startDir.x, startDir.y) || 1;
+  const endLen = Math.hypot(endDir.x, endDir.y) || 1;
+  const startInset = insetFor(startDir.x, startDir.y);
+  const endInset = insetFor(endDir.x, endDir.y) + 5;
+
+  const start = {
+    x: from.x + (startDir.x / startLen) * startInset,
+    y: from.y + (startDir.y / startLen) * startInset,
+  };
+  const end = {
+    x: to.x - (endDir.x / endLen) * endInset,
+    y: to.y - (endDir.y / endLen) * endInset,
+  };
+
+  return {
+    path: `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`,
+    pointAt: (t) => {
+      const inv = 1 - t;
+      return {
+        x: inv * inv * start.x + 2 * inv * t * control.x + t * t * end.x,
+        y: inv * inv * start.y + 2 * inv * t * control.y + t * t * end.y,
+      };
+    },
+  };
+}
+
+function edgeColor(edge: FlowEdge, status: EdgeStatus | null) {
+  if (status === "error") return COLOR.error;
+  if (status === "ok") return COLOR.ok;
+  if (!edge.instrumented) return COLOR.uninstrumented;
+  return edge.plane === "telemetry" ? COLOR.telemetry : COLOR.idle;
 }
 
 export function FlowDiagram({ variant }: { variant: "sidebar" | "full" }) {
@@ -41,8 +125,9 @@ export function FlowDiagram({ variant }: { variant: "sidebar" | "full" }) {
   // useRef(new FlowEdgeMapper()) would construct a new FlowEdgeMapper on every render (only the
   // first render's value is ever kept) — that's pure waste every render, and this component's own
   // requestAnimationFrame loop re-renders it up to ~60 times/second while any pulse is animating.
-  const mapperRef = useRef<FlowEdgeMapper>();
+  const mapperRef = useRef<FlowEdgeMapper | null>(null);
   if (!mapperRef.current) mapperRef.current = new FlowEdgeMapper();
+  const mapper = mapperRef.current;
   // Tracks the last-processed span by ID, not by array length: traceStream's ring buffer stays at
   // a fixed 200 entries once full (old spans drop off the front as new ones arrive), so comparing
   // lengths alone stops detecting "new" spans the moment the buffer fills — the diagram would
@@ -64,12 +149,12 @@ export function FlowDiagram({ variant }: { variant: "sidebar" | "full" }) {
     if (newSpans.length === 0) return;
     const newPulses: Pulse[] = [];
     for (const span of newSpans) {
-      for (const edge of mapperRef.current.edgesForSpan(span)) {
+      for (const edge of mapper.edgesForSpan(span)) {
         newPulses.push({ ...edge, startedAt: performance.now(), durationMs: pulseDuration(edge.latencyMs) });
       }
     }
     if (newPulses.length > 0) setPulses((prev) => [...prev, ...newPulses]);
-  }, [spans]);
+  }, [spans, mapper]);
 
   useEffect(() => {
     if (pulses.length === 0) return;
@@ -88,9 +173,7 @@ export function FlowDiagram({ variant }: { variant: "sidebar" | "full" }) {
   const now = performance.now();
   const activeEdgeStatus = new Map<string, EdgeStatus>();
   for (const pulse of pulses) {
-    const staticEdge = STATIC_EDGES.find(
-      (e) => (e.from === pulse.from && e.to === pulse.to) || (e.from === pulse.to && e.to === pulse.from),
-    );
+    const staticEdge = edgeFor(pulse.from, pulse.to);
     if (staticEdge) activeEdgeStatus.set(staticEdge.id, pulse.status);
   }
 
@@ -107,81 +190,150 @@ export function FlowDiagram({ variant }: { variant: "sidebar" | "full" }) {
   }
 
   const lagByGroup = new Map((lag ?? []).map((entry) => [entry.groupId, entry]));
+  const isFull = variant === "full";
+
+  // One geometry per drawn edge, reused by both the static line and any pulse riding it — so a dot
+  // always travels the exact curve that is drawn, never a straight line across a bowed edge.
+  const geometryByEdgeId = new Map(
+    FLOW_EDGES.map((edge) => [edge.id, edgeGeometry(nodeById(edge.from), nodeById(edge.to), edge.curve)] as const),
+  );
 
   return (
-    <div className={variant === "full" ? "space-y-4" : "space-y-2"}>
-      {variant === "full" && (
-        <>
-          <p className="text-sm text-slate-500">
-            Live spans from trace-collector's SSE stream, mapped to the only hops that actually
-            exist today. {!connected && <span className="text-amber-600">(stream disconnected — reconnecting)</span>}
-          </p>
-          <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#2563eb]" /> moving dot = a span just
-              arrived on that hop (label shows its latency)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#dc2626]" /> red = span reported an
-              error (dot stops partway, doesn't complete the hop)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-0.5 w-4 bg-[#2563eb]" /> solid blue line = this hop saw traffic
-              recently
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-0.5 w-4 bg-[#cbd5e1]" /> faint gray line = hop exists but idle
-            </span>
-          </div>
-        </>
+    <div className={isFull ? "space-y-3" : "space-y-2"}>
+      {isFull && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#2563eb]" />
+            moving dot = a real span just arrived on that hop
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#dc2626]" />
+            red = span reported an error (stops partway)
+          </span>
+          <span className="flex items-center gap-1.5">
+            <svg width="26" height="8" aria-hidden="true">
+              <line x1="0" y1="4" x2="26" y2="4" stroke={COLOR.idle} strokeWidth="1.5" />
+            </svg>
+            hop exists, currently idle
+          </span>
+          <span className="flex items-center gap-1.5">
+            <svg width="26" height="8" aria-hidden="true">
+              <line x1="0" y1="4" x2="26" y2="4" stroke={COLOR.uninstrumented} strokeWidth="1.5" strokeDasharray="3 3" />
+            </svg>
+            real hop, but emits no span — never pulses
+          </span>
+        </div>
       )}
+
       <svg
         viewBox={`0 0 ${FLOW_VIEWBOX.width} ${FLOW_VIEWBOX.height}`}
         className="w-full rounded-xl border border-slate-200 bg-white"
         role="img"
-        aria-label="System flow diagram"
+        aria-label="System flow: merchant-web writes to menu-service, which commits the item and an outbox row to Postgres; the outbox relay publishes to the menu.events Kafka topic; availability-service consumes it, checks its dedupe table, and writes Redis. Every service also emits spans to trace-collector."
       >
-        {STATIC_EDGES.map((edge) => {
-          const from = nodeById(edge.from);
-          const to = nodeById(edge.to);
+        <defs>
+          {Object.entries({ ok: COLOR.ok, error: COLOR.error, idle: COLOR.idle, uninstrumented: COLOR.uninstrumented }).map(
+            ([name, color]) => (
+              <marker
+                key={name}
+                id={`arrow-${name}-${variant}`}
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="5"
+                markerHeight="5"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
+              </marker>
+            ),
+          )}
+        </defs>
+
+        {/* Observability plane divider — telemetry is the instrument, not the machine. */}
+        <line
+          x1={12}
+          y1={TELEMETRY_DIVIDER_Y}
+          x2={FLOW_VIEWBOX.width - 12}
+          y2={TELEMETRY_DIVIDER_Y}
+          stroke="#e2e8f0"
+          strokeWidth={1}
+          strokeDasharray="4 4"
+        />
+        <text x={14} y={TELEMETRY_DIVIDER_Y - 7} fontSize={10} fill="#94a3b8">
+          observability plane — how you are able to see any of the above
+        </text>
+
+        {FLOW_EDGES.map((edge) => {
           const status = activeEdgeStatus.get(edge.id) ?? null;
+          const geometry = geometryByEdgeId.get(edge.id)!;
+          const color = edgeColor(edge, status);
+          const markerName = status ?? (edge.instrumented ? "idle" : "uninstrumented");
+          // Labels sit slightly past the midpoint and above the path. On a bowed edge the midpoint
+          // of the curve is nowhere near the midpoint of the straight line, which is why this reads
+          // the point off the geometry rather than averaging the endpoints.
+          const labelAt = geometry.pointAt(0.5);
           return (
-            <line
-              key={edge.id}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              stroke={edgeColor(status)}
-              strokeWidth={status ? 2.5 : 1.5}
-              opacity={status ? 1 : 0.5}
-            />
+            <g key={edge.id}>
+              <path
+                d={geometry.path}
+                fill="none"
+                stroke={color}
+                strokeWidth={status ? 2.4 : 1.3}
+                strokeDasharray={edge.instrumented ? undefined : "3 3"}
+                opacity={status ? 1 : edge.plane === "telemetry" ? 0.5 : 0.85}
+                markerEnd={`url(#arrow-${markerName}-${variant})`}
+              />
+              {isFull && edge.label && !status && (
+                <text
+                  x={labelAt.x}
+                  y={labelAt.y - 6}
+                  textAnchor="middle"
+                  fontSize={9}
+                  fill="#94a3b8"
+                  paintOrder="stroke"
+                  stroke="#ffffff"
+                  strokeWidth={3}
+                  strokeLinejoin="round"
+                >
+                  {edge.label}
+                </text>
+              )}
+            </g>
           );
         })}
 
         {pulses.map((pulse) => {
-          const from = nodeById(pulse.from);
-          const to = nodeById(pulse.to);
+          const staticEdge = edgeFor(pulse.from, pulse.to);
+          const geometry = staticEdge ? geometryByEdgeId.get(staticEdge.id) : undefined;
+          if (!geometry || !staticEdge) return null;
           let progress = Math.min(1, (now - pulse.startedAt) / pulse.durationMs);
           if (pulse.status === "error") progress = Math.min(progress, ERROR_STOP_PROGRESS);
-          const x = from.x + (to.x - from.x) * progress;
-          const y = from.y + (to.y - from.y) * progress;
-          // Labeling the dot's own position runs the text straight through the source/destination
-          // node circles whenever the dot is near either end (most of a short pulse's life) — and
-          // for edges ending near the viewBox's own edge (storefront-api, menu-service,
-          // availability-service all sit close to it), that text ran off the visible area
-          // entirely. The edge's fixed midpoint is never that close to either node or the
-          // viewBox boundary in this hexagon layout, so the label anchors there instead of
-          // chasing the dot.
-          const midX = (from.x + to.x) / 2;
-          const midY = (from.y + to.y) / 2;
+          // A pulse can be emitted in the opposite direction to how the edge is drawn (the mapper
+          // reports the hop, `edgeFor` matches either orientation), so travel the path backwards
+          // rather than having the dot slide the wrong way down the arrow.
+          const forwards = staticEdge.from === pulse.from;
+          const position = geometry.pointAt(forwards ? progress : 1 - progress);
+          const labelAt = geometry.pointAt(0.5);
           const edgeKey = [pulse.from, pulse.to].sort().join("|");
-          const showLabel = variant === "full" && latestPulseKeyByEdge.get(edgeKey)?.key === pulse.key;
+          const showLabel = isFull && latestPulseKeyByEdge.get(edgeKey)?.key === pulse.key;
+          const color = pulse.status === "error" ? COLOR.error : COLOR.ok;
           return (
             <g key={pulse.key}>
-              <circle cx={x} cy={y} r={6} fill={edgeColor(pulse.status)} />
+              <circle cx={position.x} cy={position.y} r={5.5} fill={color} />
               {showLabel && (
-                <text x={midX} y={midY - 10} textAnchor="middle" fontSize={11} fill={edgeColor(pulse.status)}>
+                <text
+                  x={labelAt.x}
+                  y={labelAt.y - 6}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fontWeight={600}
+                  fill={color}
+                  paintOrder="stroke"
+                  stroke="#ffffff"
+                  strokeWidth={3.5}
+                  strokeLinejoin="round"
+                >
                   {pulse.latencyMs}ms {pulse.latencyLabel}
                 </text>
               )}
@@ -191,27 +343,58 @@ export function FlowDiagram({ variant }: { variant: "sidebar" | "full" }) {
 
         {FLOW_NODES.map((node) => {
           const groupLag = lagByGroup.get(node.id);
+          const isStore = node.kind === "store" || node.kind === "topic";
+          const dimmed = node.plane === "telemetry";
           return (
-            <g key={node.id}>
-              <circle cx={node.x} cy={node.y} r={26} fill="#f8fafc" stroke="#94a3b8" strokeWidth={1.5} />
-              <text x={node.x} y={node.y - 34} textAnchor="middle" fontSize={variant === "full" ? 12 : 10} fill="#334155" fontWeight={600}>
+            <g key={node.id} opacity={dimmed ? 0.7 : 1}>
+              <rect
+                x={node.x - NODE_HALF_W}
+                y={node.y - NODE_HALF_H}
+                width={NODE_HALF_W * 2}
+                height={NODE_HALF_H * 2}
+                rx={node.kind === "topic" ? 14 : 5}
+                fill={isStore ? "#ffffff" : "#f1f5f9"}
+                stroke={isStore ? "#94a3b8" : "#64748b"}
+                strokeWidth={1.3}
+                strokeDasharray={node.kind === "client" ? "4 3" : undefined}
+              />
+              <text
+                x={node.x}
+                y={node.sublabel ? node.y - 2 : node.y + 3}
+                textAnchor="middle"
+                fontSize={isFull ? 10.5 : 9}
+                fontWeight={600}
+                fill="#1e293b"
+              >
                 {node.label}
               </text>
-              {groupLag && variant === "full" && (
+              {node.sublabel && (
+                <text x={node.x} y={node.y + 9} textAnchor="middle" fontSize={isFull ? 8.5 : 7.5} fill="#64748b">
+                  {node.sublabel}
+                </text>
+              )}
+              {groupLag && isFull && (
                 <text
                   x={node.x}
-                  y={node.y + 44}
+                  y={node.y + NODE_HALF_H + 12}
                   textAnchor="middle"
-                  fontSize={10}
+                  fontSize={9.5}
+                  fontWeight={600}
                   fill={groupLag.lag > 0 ? "#b45309" : "#16a34a"}
                 >
-                  lag: {groupLag.lag}
+                  consumer lag: {groupLag.lag}
                 </text>
               )}
             </g>
           );
         })}
       </svg>
+
+      {isFull && !connected && (
+        <p className="text-xs text-amber-700">
+          SSE stream disconnected — reconnecting. Nothing will pulse until it reattaches.
+        </p>
+      )}
     </div>
   );
 }

@@ -30,6 +30,10 @@ fun Route.itemRoutes(repository: ItemRepository) {
             call.respond(HttpStatusCode.Created, VenueResponse(id, request.name))
         }
 
+        get {
+            call.respond(HttpStatusCode.OK, repository.listVenues())
+        }
+
         route("/{venueId}/items") {
             post {
                 val venueId = call.parameters["venueId"]?.let(UUID::fromString)

@@ -3,6 +3,8 @@ import { Table, THead, TBody, Th, Td } from "../../components/ui/Table";
 import { Badge } from "../../components/ui/Badge";
 import { useConsumerLag } from "../../api/queries/lag";
 import { FlowDiagram } from "./FlowDiagram";
+import { SourceTag } from "../../components/ui/SourceTag";
+import { InvariantBadge } from "../../components/ui/InvariantBadge";
 
 export function SystemFlow() {
   const { data: lag } = useConsumerLag();
@@ -11,11 +13,23 @@ export function SystemFlow() {
     <div className="space-y-6">
       <PageHeader
         title="System flow"
-        subtitle="Real spans from trace-collector's SSE stream, animated as they happen — no simulated data."
+        subtitle={
+          <>
+            Every dot is a real span arriving on trace-collector's SSE stream. Boxes are the actual
+            services, databases and Kafka topics; arrows show direction and name the mechanism. The
+            write path runs left to right along the top — note that the outbox row commits inside the
+            same Postgres transaction as the item, which is what makes a lost publish impossible.{" "}
+            <InvariantBadge n={1} />
+          </>
+        }
+        source={<SourceTag tone="live" origin="trace-collector · SSE" freshness="live" />}
       />
       <FlowDiagram variant="full" />
       <div className="space-y-2">
-        <h2 className="text-sm font-semibold text-slate-900">Consumer lag</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-900">Kafka consumer lag</h2>
+          <SourceTag origin="trace-collector · AdminClient" freshness="polled" />
+        </div>
         <Table>
           <THead>
             <tr>
@@ -40,7 +54,13 @@ export function SystemFlow() {
             ))}
           </TBody>
         </Table>
-        {(lag ?? []).length === 0 && <p className="text-sm text-slate-500">No monitored consumer groups.</p>}
+        {(lag ?? []).length === 0 && (
+          <p className="text-sm text-slate-500">
+            No monitored consumer groups. trace-collector reads lag for the groups named in
+            MONITORED_CONSUMER_GROUPS via Kafka's AdminClient — that list is static config, not
+            auto-discovery, so a new consumer has to be added to it explicitly.
+          </p>
+        )}
       </div>
     </div>
   );

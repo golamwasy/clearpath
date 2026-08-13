@@ -3,6 +3,10 @@ import { Table, THead, TBody, Th, Td } from "../../components/ui/Table";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { InlineError } from "../../components/ui/InlineError";
 import { Spinner } from "../../components/ui/Spinner";
+import { SourceTag } from "../../components/ui/SourceTag";
+import { InvariantBadge } from "../../components/ui/InvariantBadge";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Link } from "react-router-dom";
 import { AvailabilityCell } from "./AvailabilityCell";
 import { useUpdateAvailability, useVenueAvailability } from "../../api/queries/availability";
 import { useVenueItems } from "../../api/queries/menu";
@@ -40,7 +44,16 @@ export function AvailabilityBoard() {
     <div className="space-y-6">
       <PageHeader
         title="Availability"
-        subtitle={`${itemIds.size} ${itemIds.size === 1 ? "item" : "items"} · click a status to change it`}
+        subtitle={
+          <>
+            {itemIds.size} {itemIds.size === 1 ? "item" : "items"} · click a status to change it.
+            Availability is near real time; menu data is only eventually consistent. An item
+            availability-service has no state for yet is shown as having none, rather than being
+            presented as on sale — that gap is a real race, and this screen keeps it visible instead
+            of papering over it. <InvariantBadge n={4} />
+          </>
+        }
+        source={<SourceTag tone="live" origin="availability-service · Redis" freshness="polled 3s" />}
       />
       <Table>
         <THead>
@@ -70,7 +83,20 @@ export function AvailabilityBoard() {
           })}
         </TBody>
       </Table>
-      {itemIds.size === 0 && <p className="text-sm text-slate-500">No items yet for this venue.</p>}
+      {itemIds.size === 0 && (
+        <EmptyState
+          title="Nothing to show availability for"
+          reason="Neither menu-service nor availability-service has any items under this venue, so there is no stock state to display."
+          fills="Availability rows appear as availability-service consumes menu.events — usually well under a second after an item is created."
+          action={
+            <Link to="/">
+              <span className="text-sm font-medium text-blue-700 hover:underline">
+                Set up a venue with a sample menu →
+              </span>
+            </Link>
+          }
+        />
+      )}
     </div>
   );
 }

@@ -78,7 +78,7 @@ describe("ChaosPanel duplicate delivery", () => {
 
     renderChaosPanel();
 
-    await screen.findByText("Force duplicate delivery (headline case)");
+    await screen.findByText("Force a duplicate delivery");
     await user.click(screen.getByRole("button", { name: /fire duplicate delivery/i }));
 
     await waitFor(() => expect(screen.getByText("rejected")).toBeInTheDocument());

@@ -42,6 +42,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VenueResponse" }
+    get:
+      operationId: listVenues
+      summary: Every venue, newest first. Unpaginated — venues are operator-created, so the row count is bounded by effort rather than traffic.
+      responses:
+        "200":
+          description: All venues
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/VenueSummary" }
   /venues/{venueId}/items:
     parameters:
       - name: venueId
@@ -167,6 +178,13 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+    VenueSummary:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        createdAt: { type: string, format: date-time }
     CreateItemRequest:
       type: object
       required: [name]

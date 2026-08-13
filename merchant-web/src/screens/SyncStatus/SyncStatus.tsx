@@ -4,6 +4,8 @@ import { Badge } from "../../components/ui/Badge";
 import { InlineError } from "../../components/ui/InlineError";
 import { Spinner } from "../../components/ui/Spinner";
 import { RetryButton } from "./RetryButton";
+import { SourceTag } from "../../components/ui/SourceTag";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { useSyncRuns } from "../../api/queries/syncRuns";
 import { formatDateTime } from "../../lib/format";
 import type { SyncRun } from "../../api/queries/syncRuns";
@@ -20,8 +22,17 @@ export function SyncStatus() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Sync status"
-        subtitle={`${(runs ?? []).length} recent ${(runs ?? []).length === 1 ? "run" : "runs"} from pos-ingest`}
+        title="POS sync status"
+        subtitle={
+          <>
+            {(runs ?? []).length} recent {(runs ?? []).length === 1 ? "run" : "runs"}. pos-ingest polls
+            two deliberately mismatched mock POS providers on a timer — nested JSON with integer cents
+            and string IDs, and a flat array with decimal-string prices — and normalizes both into one
+            internal schema. Failures here are real: retries use exponential backoff with jitter, and
+            exhausted retries go to pos.sync.dlq.
+          </>
+        }
+        source={<SourceTag origin="pos-ingest · Postgres" freshness="polled" />}
       />
       <Table>
         <THead>
@@ -57,7 +68,13 @@ export function SyncStatus() {
           ))}
         </TBody>
       </Table>
-      {(runs ?? []).length === 0 && <p className="text-sm text-slate-500">No sync runs yet.</p>}
+      {(runs ?? []).length === 0 && (
+        <EmptyState
+          title="pos-ingest has not recorded a poll yet"
+          reason="Every venue poll writes a sync_runs row to pos-ingest's own Postgres database. An empty table means the worker pool has not completed a cycle since startup."
+          fills="Runs appear on their own within a poll interval — no action needed. If they never appear, check pos-ingest and its mock providers in the service panel on Start here."
+        />
+      )}
     </div>
   );
 }

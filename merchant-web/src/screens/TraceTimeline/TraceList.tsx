@@ -5,6 +5,9 @@ import { Badge } from "../../components/ui/Badge";
 import { Spinner } from "../../components/ui/Spinner";
 import { InlineError } from "../../components/ui/InlineError";
 import { useTraces } from "../../api/queries/traces";
+import { SourceTag } from "../../components/ui/SourceTag";
+import { InvariantBadge } from "../../components/ui/InvariantBadge";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { formatDateTime } from "../../lib/format";
 
 export function TraceList() {
@@ -15,7 +18,17 @@ export function TraceList() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Traces" subtitle={`${(traces ?? []).length} recent traces from trace-collector`} />
+      <PageHeader
+        title="Traces"
+        subtitle={
+          <>
+            {(traces ?? []).length} recent traces. One row per correlation ID — every hop that ID
+            touched, across services and across Kafka, grouped back together.{" "}
+            <InvariantBadge n={3} />
+          </>
+        }
+        source={<SourceTag origin="trace-collector · Mongo" freshness="on load" />}
+      />
       <Table>
         <THead>
           <tr>
@@ -44,7 +57,13 @@ export function TraceList() {
           ))}
         </TBody>
       </Table>
-      {(traces ?? []).length === 0 && <p className="text-sm text-slate-500">No traces yet.</p>}
+      {(traces ?? []).length === 0 && (
+        <EmptyState
+          title="trace-collector has consumed no spans"
+          reason="Spans reach trace-collector over the system.trace Kafka topic. An empty list means no instrumented call has happened since the topic was last read — or that the consumer is not running."
+          fills="Any menu edit produces a trace. Change a price and this list fills in well under a second."
+        />
+      )}
     </div>
   );
 }
