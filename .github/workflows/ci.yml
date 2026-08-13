@@ -135,11 +135,11 @@ jobs:
 
       - name: Start backend stack
         working-directory: .
-        run: docker compose up -d postgres redis mongo kafka menu-service availability-service pos-ingest storefront-api
+        run: docker compose up -d postgres redis mongo kafka menu-service availability-service pos-ingest storefront-api trace-collector
 
       - name: Wait for services to be ready
         run: |
-          for url in http://localhost:8081/ready http://localhost:8082/ready http://localhost:8083/ready http://localhost:8085/ready; do
+          for url in http://localhost:8081/ready http://localhost:8082/ready http://localhost:8083/ready http://localhost:8085/ready http://localhost:8084/ready; do
             echo "Waiting for $url"
             for i in $(seq 1 60); do
               if curl -sf "$url" > /dev/null; then
@@ -179,7 +179,7 @@ jobs:
       - name: Dump backend logs on failure
         if: failure()
         working-directory: .
-        run: docker compose logs menu-service availability-service pos-ingest storefront-api
+        run: docker compose logs menu-service availability-service pos-ingest storefront-api trace-collector
 
       - name: Tear down backend stack
         if: always()
