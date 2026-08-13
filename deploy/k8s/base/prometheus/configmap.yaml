@@ -1,0 +1,38 @@
+# Static scrape config, one job per app service that exposes /metrics on its app port. The mock
+# POS providers (nested-pos, flat-pos) don't have /metrics, so they're intentionally omitted.
+# Matches deploy/prometheus/prometheus.yml (docker-compose's equivalent config).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: clearpath
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+
+    scrape_configs:
+      - job_name: menu-service
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["menu-service:8081"]
+
+      - job_name: availability-service
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["availability-service:8082"]
+
+      - job_name: pos-ingest
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["pos-ingest:8083"]
+
+      - job_name: trace-collector
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["trace-collector:8084"]
+
+      - job_name: storefront-api
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["storefront-api:8085"]

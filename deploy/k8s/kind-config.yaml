@@ -1,0 +1,8 @@
+# Single-node kind cluster: default control-plane node is fine. No extraPortMappings — access is
+# via `kubectl port-forward`, not NodePort-through-the-host (see merchant-web/service.yaml's
+# NodePort, which is a fallback for a differently-configured cluster, not the primary path here).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: clearpath
+nodes:
+  - role: control-plane

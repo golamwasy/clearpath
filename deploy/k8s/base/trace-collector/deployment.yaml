@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trace-collector
+  namespace: clearpath
+  labels:
+    app: trace-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trace-collector
+  template:
+    metadata:
+      labels:
+        app: trace-collector
+    spec:
+      containers:
+        - name: trace-collector
+          image: trace-collector:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: clearpath-config
+            - configMapRef:
+                name: trace-collector-config
+            - secretRef:
+                name: clearpath-secrets
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8084
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8084
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

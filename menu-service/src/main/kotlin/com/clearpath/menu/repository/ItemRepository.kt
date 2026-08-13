@@ -60,6 +60,7 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                     eventType = "ItemCreated",
                     version = 0,
                     correlationId = ctx.correlationId,
+                    itemName = request.name,
                 )
 
                 ItemWriteResult.Success(
@@ -112,6 +113,7 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                     eventType = "ItemUpdated",
                     version = newVersion,
                     correlationId = ctx.correlationId,
+                    itemName = request.name,
                 )
 
                 ItemWriteResult.Success(
@@ -158,6 +160,7 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                     eventType = "ItemDeleted",
                     version = newVersion,
                     correlationId = ctx.correlationId,
+                    itemName = existing[Items.name],
                 )
 
                 ItemWriteResult.Success(
@@ -217,6 +220,11 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
                 )
             }
 
+    /** Rows the relay hasn't published yet — the outbox backlog depth metric. See docs on /metrics. */
+    fun outboxBacklogCount(): Long = transaction(db) {
+        Outbox.selectAll().where { Outbox.publishedAt.isNull() }.count()
+    }
+
     fun createVenue(name: String): String = transaction(db) {
         val id = UUID.randomUUID()
         Venues.insert {
@@ -234,6 +242,7 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
         eventType: String,
         version: Int,
         correlationId: String,
+        itemName: String? = null,
     ) {
         val event = MenuEvent(
             eventId = UUID.randomUUID().toString(),
@@ -243,6 +252,7 @@ class ItemRepository(private val db: Database, private val tracer: Tracer) {
             version = version,
             correlationId = correlationId,
             occurredAt = Instant.now().toString(),
+            itemName = itemName,
         )
         Outbox.insert {
             it[aggregateType] = "Item"

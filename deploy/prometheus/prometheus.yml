@@ -1,0 +1,22 @@
+# Static scrape config, not service discovery — matches this repo's existing preference for
+# explicit config over auto-detection (pos-ingest/venues.json, MONITORED_CONSUMER_GROUPS). A new
+# service's /metrics endpoint needs adding here explicitly, same as those.
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: menu-service
+    static_configs:
+      - targets: ["menu-service:8081"]
+  - job_name: availability-service
+    static_configs:
+      - targets: ["availability-service:8082"]
+  - job_name: pos-ingest
+    static_configs:
+      - targets: ["pos-ingest:8083"]
+  - job_name: trace-collector
+    static_configs:
+      - targets: ["trace-collector:8084"]
+  - job_name: storefront-api
+    static_configs:
+      - targets: ["storefront-api:8085"]

@@ -15,12 +15,17 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.metrics.micrometer.MicrometerMetrics
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.distribution.DistributionStatisticConfig
+import io.micrometer.prometheusmetrics.PrometheusConfig
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import kotlinx.serialization.json.Json
 import org.apache.kafka.clients.admin.AdminClient
 import org.apache.kafka.clients.admin.AdminClientConfig
@@ -45,6 +50,25 @@ fun main() {
 }
 
 fun Application.moduleWith(consumer: SpanConsumer, store: SpanStore, broadcaster: SpanBroadcaster, lagService: KafkaLagService) {
+    val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
+    install(MicrometerMetrics) {
+        this.registry = registry
+        distributionStatisticConfig = DistributionStatisticConfig.Builder()
+            .percentilesHistogram(true)
+            .build()
+    }
+    // One gauge per monitored consumer group (today: availability-service on menu.events,
+    // trace-collector on system.trace) — see docs/adr/0005 on why lag is computed via
+    // AdminClient rather than a JMX/kafka-exporter pipeline, and why availability-service
+    // doesn't duplicate this wiring itself: the AdminClient plumbing already lives here.
+    lagService.monitoredGroups.forEach { group ->
+        Gauge.builder("kafka_consumer_lag") { lagService.currentLagFor(group) }
+            .tag("group", group.groupId)
+            .tag("topic", group.topic)
+            .description("Consumer group lag (end offset - committed offset), summed across partitions")
+            .register(registry)
+    }
+
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
     }
@@ -65,7 +89,7 @@ fun Application.moduleWith(consumer: SpanConsumer, store: SpanStore, broadcaster
     routing {
         get("/health") { call.respond(mapOf("status" to "ok")) }
         get("/ready") { call.respond(mapOf("status" to "ok")) }
-        get("/metrics") { call.respond("# not implemented\n") }
+        get("/metrics") { call.respond(registry.scrape()) }
 
         traceRoutes(store, broadcaster)
         lagRoutes(lagService)

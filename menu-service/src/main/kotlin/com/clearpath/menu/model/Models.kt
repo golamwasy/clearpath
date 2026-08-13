@@ -56,4 +56,9 @@ data class MenuEvent(
     val version: Int,
     val correlationId: String,
     val occurredAt: String,
+    // Additive, optional (see docs/adr/0006-schema-evolution-menu-events.md): availability-service's
+    // own copy of this class is deliberately left without this field to play the role of "the old
+    // consumer" in that ADR's demo. Every consumer already sets ignoreUnknownKeys = true, so this
+    // is backward compatible without any consumer change.
+    val itemName: String? = null,
 )

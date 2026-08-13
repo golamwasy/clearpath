@@ -6,6 +6,9 @@ build/
 .gradle/
 *.hprof
 
+.DS_Store
+.vscode/
+
 mocks/nested-pos/nested-pos
 mocks/flat-pos/flat-pos
 pos-ingest/pos-ingest

@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pos-ingest
+  namespace: clearpath
+  labels:
+    app: pos-ingest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pos-ingest
+  template:
+    metadata:
+      labels:
+        app: pos-ingest
+    spec:
+      containers:
+        - name: pos-ingest
+          image: pos-ingest:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: clearpath-config
+            - configMapRef:
+                name: pos-ingest-config
+            - secretRef:
+                name: clearpath-secrets
+          volumeMounts:
+            - name: venues-config
+              mountPath: /app/venues.json
+              subPath: venues.json
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8083
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "250m"
+      volumes:
+        - name: venues-config
+          configMap:
+            name: pos-ingest-venues

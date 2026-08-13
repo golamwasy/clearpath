@@ -10,9 +10,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/clearpath/pos-ingest/internal/metrics"
 	"github.com/clearpath/pos-ingest/internal/model"
 	"github.com/clearpath/pos-ingest/internal/tracing"
 )
@@ -70,14 +72,41 @@ func NewHandlers(
 
 func (h *Handlers) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /sync-runs", h.correlate("GET /sync-runs", h.listSyncRuns))
-	mux.HandleFunc("POST /sync-runs/{id}/retry", h.correlate("POST /sync-runs/{id}/retry", h.retrySyncRun))
-	mux.HandleFunc("GET /health", h.correlate("GET /health", h.health))
-	mux.HandleFunc("GET /ready", h.correlate("GET /ready", h.readyCheck))
-	mux.HandleFunc("GET /metrics", h.correlate("GET /metrics", h.metrics))
-	mux.HandleFunc("GET /chaos/state", h.correlate("GET /chaos/state", h.chaosState))
-	mux.HandleFunc("POST /chaos/latency", h.correlate("POST /chaos/latency", h.setChaosLatency))
+	route := func(pattern string, next http.HandlerFunc) {
+		mux.HandleFunc(pattern, h.instrument(pattern, h.correlate(pattern, next)))
+	}
+	route("GET /sync-runs", h.listSyncRuns)
+	route("POST /sync-runs/{id}/retry", h.retrySyncRun)
+	route("GET /health", h.health)
+	route("GET /ready", h.readyCheck)
+	route("GET /chaos/state", h.chaosState)
+	route("POST /chaos/latency", h.setChaosLatency)
+	// /metrics itself isn't instrumented/correlated — scraping it shouldn't show up as a traced,
+	// counted application request.
+	mux.Handle("GET /metrics", metrics.Handler())
 	return withCORS(mux)
+}
+
+// instrument records request rate and latency per route — the request-rate/error-rate/latency
+// histogram trio CLAUDE.md's deployability phase asks every service to expose.
+func (h *Handlers) instrument(route string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next(sw, r)
+		metrics.HTTPRequestDuration.WithLabelValues(route).Observe(time.Since(start).Seconds())
+		metrics.HTTPRequestsTotal.WithLabelValues(route, strconv.Itoa(sw.status)).Inc()
+	}
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
 }
 
 // withCORS lets merchant-web (a browser app on its own origin, e.g. the Vite dev server)
@@ -171,14 +200,6 @@ func (h *Handlers) readyCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-}
-
-// metrics is a stub returning placeholder text, not real Prometheus output —
-// matching the current stub state of /metrics on menu-service and
-// availability-service per CLAUDE.md.
-func (h *Handlers) metrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = w.Write([]byte("# pos-ingest metrics not yet implemented\n"))
 }
 
 // chaosState is the response shape for GET /chaos/state and POST /chaos/latency.

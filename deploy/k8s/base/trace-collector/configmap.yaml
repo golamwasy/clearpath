@@ -1,0 +1,11 @@
+# MONGO_DATABASE and MONITORED_CONSUMER_GROUPS are specific to trace-collector — MONGO_DATABASE
+# would collide with availability-service's own value of that key in a shared ConfigMap, and
+# MONITORED_CONSUMER_GROUPS is static config only trace-collector's /consumer-lag endpoint reads.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trace-collector-config
+  namespace: clearpath
+data:
+  MONGO_DATABASE: "tracing"
+  MONITORED_CONSUMER_GROUPS: "availability-service:menu.events,trace-collector:system.trace"

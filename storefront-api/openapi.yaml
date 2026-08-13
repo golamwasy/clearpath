@@ -1,0 +1,87 @@
+openapi: 3.0.3
+info:
+  title: storefront-api
+  description: >
+    Read-composition/cache layer over menu-service and availability-service. Minimal stub built
+    for phase 6 deployability work (Dockerfile/k8s/k6 all need a real storefront-api to target) —
+    see docs/adr/0007-storefront-api-stub.md for scope. One endpoint: the venue menu joined with
+    current availability, cached in Redis with a short TTL.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8085
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /ready:
+    get:
+      operationId: ready
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+  /venues/{venueId}/menu:
+    parameters:
+      - name: venueId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getVenueMenu
+      description: >
+        menu-service's items for this venue joined with availability-service's current status on
+        itemId. Cache-aside through Redis (STOREFRONT_MENU_CACHE_TTL_SECONDS, default 5s).
+        `status: "unknown"` means availability-service has no state yet for that item — a real
+        state, not an error.
+      responses:
+        "200":
+          description: Composed venue menu
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorefrontMenuResponse" }
+        "502":
+          description: menu-service or availability-service call failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+components:
+  schemas:
+    StorefrontMenuItem:
+      type: object
+      required: [id, venueId, name, sortOrder, status]
+      properties:
+        id: { type: string }
+        venueId: { type: string }
+        categoryId: { type: string, nullable: true }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        priceCents: { type: integer, nullable: true }
+        sortOrder: { type: integer }
+        status: { type: string, enum: [in_stock, sold_out, sold_out_until, unknown] }
+        soldOutUntil: { type: string, nullable: true }
+    StorefrontMenuResponse:
+      type: object
+      required: [venueId, items]
+      properties:
+        venueId: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/StorefrontMenuItem" }
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error: { type: string }
+        message: { type: string }

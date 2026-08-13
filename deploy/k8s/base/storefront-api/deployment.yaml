@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront-api
+  namespace: clearpath
+  labels:
+    app: storefront-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storefront-api
+  template:
+    metadata:
+      labels:
+        app: storefront-api
+    spec:
+      containers:
+        - name: storefront-api
+          image: storefront-api:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8085
+          envFrom:
+            - configMapRef:
+                name: clearpath-config
+            - secretRef:
+                name: clearpath-secrets
+          env:
+            # These reference other Services' own metadata.name from this same kustomization, so
+            # they're hardcoded here rather than centralized in configmap-common.yaml.
+            - name: MENU_SERVICE_URL
+              value: "http://menu-service:8081"
+            - name: AVAILABILITY_SERVICE_URL
+              value: "http://availability-service:8082"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8085
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8085
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

@@ -127,6 +127,11 @@ class WritePathIntegrationTest {
     private val httpClient = HttpClient.newHttpClient()
     private val json = Json { ignoreUnknownKeys = true }
 
+    // Also doubles as the schema-evolution demo's automated proof (docs/adr/0006): menu-service's
+    // MenuEvent now carries an additive `itemName` field that availability-service's own copy of
+    // MenuEvent (unmodified here, deliberately) does not declare. If ignoreUnknownKeys stopped
+    // covering this repo's consumers, deserialization in MenuEventConsumer would throw and this
+    // test would fail before ever reaching the Redis assertions below.
     @Test
     fun `item written via menu-service REST API appears in availability-service Redis state`() {
         val venueRequest = HttpRequest.newBuilder()

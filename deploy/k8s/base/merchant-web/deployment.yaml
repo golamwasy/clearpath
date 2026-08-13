@@ -1,0 +1,49 @@
+# Static SPA, no runtime env vars — API base URLs are baked in at image build time via
+# VITE_*_API_URL build args (see merchant-web/Dockerfile), so there's nothing to wire up here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: merchant-web
+  namespace: clearpath
+  labels:
+    app: merchant-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: merchant-web
+  template:
+    metadata:
+      labels:
+        app: merchant-web
+    spec:
+      containers:
+        - name: merchant-web
+          image: merchant-web:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          # No /health endpoint on this static nginx image — probe the SPA's own root instead.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "250m"

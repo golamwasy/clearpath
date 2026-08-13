@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pos-ingest
+  namespace: clearpath
+  labels:
+    app: pos-ingest
+spec:
+  selector:
+    app: pos-ingest
+  ports:
+    - name: http
+      port: 8083
+      targetPort: 8083

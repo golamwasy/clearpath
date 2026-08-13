@@ -8,6 +8,7 @@ import (
 
 	segmentio "github.com/segmentio/kafka-go"
 
+	"github.com/clearpath/pos-ingest/internal/metrics"
 	"github.com/clearpath/pos-ingest/internal/model"
 	"github.com/clearpath/pos-ingest/internal/tracing"
 )
@@ -89,6 +90,7 @@ func (p *Producer) PublishDLQ(ctx context.Context, envelope model.DLQEnvelope) e
 		if err := p.dlqWriter.WriteMessages(ctx, msg); err != nil {
 			return fmt.Errorf("publish pos.sync.dlq: %w", err)
 		}
+		metrics.DLQPublishedTotal.Inc()
 		return nil
 	})
 }

@@ -130,6 +130,32 @@ services:
       CORS_ALLOWED_ORIGIN_HOST: "localhost:5173"
       MONITORED_CONSUMER_GROUPS: "availability-service:menu.events,trace-collector:system.trace"
 
+  storefront-api:
+    build:
+      context: .
+      dockerfile: storefront-api/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      menu-service:
+        condition: service_started
+      availability-service:
+        condition: service_started
+    ports:
+      - "8085:8085"
+    environment:
+      MENU_SERVICE_URL: http://menu-service:8081
+      AVAILABILITY_SERVICE_URL: http://availability-service:8082
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SYSTEM_TRACE_TOPIC: system.trace
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      STOREFRONT_MENU_CACHE_TTL_SECONDS: "5"
+      STOREFRONT_HTTP_PORT: "8085"
+      CORS_ALLOWED_ORIGIN_HOST: "localhost:5173"
+
   nested-pos:
     build:
       context: .
@@ -185,6 +211,42 @@ services:
       CHAOS_ENABLED: "true"
     volumes:
       - ./pos-ingest/venues.json:/app/venues.json:ro
+
+  merchant-web:
+    build:
+      context: .
+      dockerfile: merchant-web/Dockerfile
+      # Vite bakes these in at build time; they point at the *host*-visible ports (matching this
+      # file's own port mappings below), since the browser running the built JS talks to
+      # localhost, not the docker-compose network.
+      args:
+        VITE_MENU_API_URL: http://localhost:8081
+        VITE_AVAILABILITY_API_URL: http://localhost:8082
+        VITE_POS_API_URL: http://localhost:8083
+        VITE_TRACE_API_URL: http://localhost:8084
+    depends_on:
+      - menu-service
+      - availability-service
+      - pos-ingest
+      - trace-collector
+    ports:
+      - "5173:8080"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
 
 volumes:
   postgres-data:

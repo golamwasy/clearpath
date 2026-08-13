@@ -8,6 +8,7 @@ import com.clearpath.tracing.Tracer
 import com.clearpath.tracing.installTracing
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
+import io.ktor.server.metrics.micrometer.MicrometerMetrics
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
@@ -19,6 +20,10 @@ import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.micrometer.core.instrument.Gauge
+import io.micrometer.core.instrument.distribution.DistributionStatisticConfig
+import io.micrometer.prometheusmetrics.PrometheusConfig
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import kotlinx.serialization.json.Json
 
 fun main() {
@@ -34,6 +39,16 @@ fun main() {
 }
 
 fun Application.moduleWith(db: org.jetbrains.exposed.sql.Database, relay: OutboxRelay, tracer: Tracer) {
+    val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
+    install(MicrometerMetrics) {
+        this.registry = registry
+        // Real histogram buckets (not just count/sum/max) so p50/p95/p99 are computable in
+        // Grafana via histogram_quantile() — see deploy/grafana/clearpath-dashboard.json.
+        distributionStatisticConfig = DistributionStatisticConfig.Builder()
+            .percentilesHistogram(true)
+            .build()
+    }
+
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
     }
@@ -58,10 +73,16 @@ fun Application.moduleWith(db: org.jetbrains.exposed.sql.Database, relay: Outbox
 
     val repository = ItemRepository(db, tracer)
 
+    // Outbox backlog depth: rows not yet relayed to Kafka. A growing value means the relay is
+    // falling behind (or stopped) — see docs/adr/0001-transactional-outbox.md.
+    Gauge.builder("menu_outbox_backlog") { repository.outboxBacklogCount() }
+        .description("Outbox rows not yet published to menu.events")
+        .register(registry)
+
     routing {
         get("/health") { call.respond(mapOf("status" to "ok")) }
         get("/ready") { call.respond(mapOf("status" to "ok")) }
-        get("/metrics") { call.respond("# not implemented\n") }
+        get("/metrics") { call.respond(registry.scrape()) }
 
         itemRoutes(repository)
     }

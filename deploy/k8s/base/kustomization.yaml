@@ -1,0 +1,77 @@
+# Resource requests/limits used throughout this base (postgres/deployment.yaml,
+# redis/deployment.yaml, etc.) are reasonable defaults for a local kind cluster, not tuned against
+# real load — JVM services (menu-service, availability-service, trace-collector, storefront-api)
+# get more headroom (256Mi/250m requests, 512Mi/500m limits) than the Go services and merchant-web
+# (64Mi/100m requests, 128Mi/250m limits); infra follows the same split, postgres/kafka heavier
+# than redis/mongo.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - configmap-common.yaml
+  - secret-common.yaml
+
+  - postgres/service.yaml
+  - postgres/deployment.yaml
+  - redis/service.yaml
+  - redis/deployment.yaml
+  - mongo/service.yaml
+  - mongo/deployment.yaml
+  - kafka/configmap.yaml
+  - kafka/service.yaml
+  - kafka/deployment.yaml
+
+  - menu-service/service.yaml
+  - menu-service/deployment.yaml
+  - availability-service/configmap.yaml
+  - availability-service/service.yaml
+  - availability-service/deployment.yaml
+  - trace-collector/configmap.yaml
+  - trace-collector/service.yaml
+  - trace-collector/deployment.yaml
+  - storefront-api/service.yaml
+  - storefront-api/deployment.yaml
+  - pos-ingest/configmap.yaml
+  - pos-ingest/service.yaml
+  - pos-ingest/deployment.yaml
+  - nested-pos/configmap.yaml
+  - nested-pos/service.yaml
+  - nested-pos/deployment.yaml
+  - flat-pos/configmap.yaml
+  - flat-pos/service.yaml
+  - flat-pos/deployment.yaml
+  - merchant-web/service.yaml
+  - merchant-web/deployment.yaml
+
+  - prometheus/configmap.yaml
+  - prometheus/service.yaml
+  - prometheus/deployment.yaml
+  - grafana/service.yaml
+  - grafana/deployment.yaml
+
+# Generated from the repo's actual source files rather than hand-copied, so they can never drift:
+#   - docker/postgres-init.sh -> mounted into postgres at
+#     /docker-entrypoint-initdb.d/postgres-init.sh (see postgres/deployment.yaml)
+#   - pos-ingest/venues.json -> mounted into pos-ingest at /app/venues.json (see
+#     pos-ingest/deployment.yaml)
+#   - deploy/grafana/provisioning/{datasources,dashboards}/* -> Grafana's own provisioning
+#     directories (see grafana/deployment.yaml), same files docker-compose's grafana service mounts
+configMapGenerator:
+  - name: postgres-init
+    namespace: clearpath
+    files:
+      - ../../../docker/postgres-init.sh
+  - name: pos-ingest-venues
+    namespace: clearpath
+    files:
+      - ../../../pos-ingest/venues.json
+  - name: grafana-datasources
+    namespace: clearpath
+    files:
+      - ../../grafana/provisioning/datasources/prometheus.yml
+  - name: grafana-dashboards
+    namespace: clearpath
+    files:
+      - ../../grafana/provisioning/dashboards/dashboards.yml
+      - ../../grafana/provisioning/dashboards/clearpath-dashboard.json

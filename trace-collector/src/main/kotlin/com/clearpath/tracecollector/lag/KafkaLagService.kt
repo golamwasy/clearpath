@@ -29,9 +29,12 @@ data class ConsumerGroupLag(val groupId: String, val topic: String, val lag: Lon
  * Computed fresh on every call, not cached — request volume here is a merchant looking at a
  * dashboard, not production monitoring traffic. See docs/adr/0005-observability-ui.md.
  */
-class KafkaLagService(private val admin: AdminClient, private val monitoredGroups: List<MonitoredGroup>) {
+class KafkaLagService(private val admin: AdminClient, val monitoredGroups: List<MonitoredGroup>) {
 
     fun currentLag(): List<ConsumerGroupLag> = monitoredGroups.map { lagForGroup(it) }
+
+    /** Lag for one group, for a per-group Prometheus gauge — see Application.kt's registry setup. */
+    fun currentLagFor(group: MonitoredGroup): Long = lagForGroup(group).lag
 
     private fun lagForGroup(group: MonitoredGroup): ConsumerGroupLag {
         val committedOffsets = admin.listConsumerGroupOffsets(group.groupId)

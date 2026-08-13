@@ -1,0 +1,288 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # --- lint -------------------------------------------------------------
+  # Kotlin has no dedicated lint tool wired into this repo yet (no ktlint/detekt plugin) — its
+  # static check is compilation itself, covered by the unit-test job's `./gradlew build`, not
+  # duplicated here. Documented as a gap rather than bolting on a formatter at the tail end of
+  # this phase, which risks reformatting the whole codebase unreviewed.
+  lint-go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pos-ingest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: pos-ingest/go.sum
+      - run: gofmt -l . | tee /tmp/gofmt-out; test ! -s /tmp/gofmt-out
+      - run: go vet ./...
+
+  lint-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: merchant-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: merchant-web/package-lock.json
+      - run: npm ci
+      - run: npm run gen:api
+      - run: npm run lint
+
+  # --- unit tests ---------------------------------------------------------
+  unit-test-jvm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew build -x :integration-test:test --no-daemon
+
+  unit-test-go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pos-ingest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: pos-ingest/go.sum
+      - run: go build ./...
+      - run: go test ./...
+
+  unit-test-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: merchant-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: merchant-web/package-lock.json
+      - run: npm ci
+      - run: npx vitest run
+
+  # --- integration tests (Testcontainers) ---------------------------------
+  integration-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew :integration-test:test --no-daemon
+
+  # --- frontend build: this is the required gate (task 3) — an OpenAPI spec/generated-type
+  # drift between merchant-web and any backend service's openapi.yaml fails `npm run build`
+  # (gen:api regenerates types, then tsc -b type-checks against them) before anything else runs.
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: merchant-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: merchant-web/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  # Playwright e2e against the real backend stack (docker-compose) — unchanged from the
+  # merchant-web-only workflow this replaces, folded in here so it isn't a separate file with its
+  # own trigger paths to keep in sync.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: frontend-build
+    defaults:
+      run:
+        working-directory: merchant-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: merchant-web/package-lock.json
+
+      - name: Start backend stack
+        working-directory: .
+        run: docker compose up -d postgres redis mongo kafka menu-service availability-service pos-ingest storefront-api
+
+      - name: Wait for services to be ready
+        run: |
+          for url in http://localhost:8081/ready http://localhost:8082/ready http://localhost:8083/ready http://localhost:8085/ready; do
+            echo "Waiting for $url"
+            for i in $(seq 1 60); do
+              if curl -sf "$url" > /dev/null; then
+                echo "$url is ready"
+                break
+              fi
+              if [ "$i" -eq 60 ]; then
+                echo "$url did not become ready in time"
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      - run: npm ci
+      - run: npm run gen:api
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+
+      - name: Serve built app
+        run: npx vite preview --port 5173 &
+
+      - name: Wait for merchant-web to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5173 > /dev/null; then break; fi
+            sleep 1
+          done
+
+      - name: Run Playwright e2e specs
+        env:
+          MERCHANT_WEB_URL: http://localhost:5173
+          MENU_API_URL: http://localhost:8081
+          CI: "true"
+        run: npm run test:e2e
+
+      - name: Dump backend logs on failure
+        if: failure()
+        working-directory: .
+        run: docker compose logs menu-service availability-service pos-ingest storefront-api
+
+      - name: Tear down backend stack
+        if: always()
+        working-directory: .
+        run: docker compose down -v
+
+  # --- container build ------------------------------------------------------
+  # push:false, load:true here — the image is built and kept in the local Docker daemon so
+  # vuln-scan can scan it, but nothing is pushed to a registry until the push job (main only).
+  build-images:
+    runs-on: ubuntu-latest
+    needs: [lint-go, lint-frontend, unit-test-jvm, unit-test-go, unit-test-frontend, integration-test, frontend-build]
+    strategy:
+      matrix:
+        include:
+          - service: menu-service
+            dockerfile: menu-service/Dockerfile
+          - service: availability-service
+            dockerfile: availability-service/Dockerfile
+          - service: trace-collector
+            dockerfile: trace-collector/Dockerfile
+          - service: storefront-api
+            dockerfile: storefront-api/Dockerfile
+          - service: pos-ingest
+            dockerfile: pos-ingest/Dockerfile
+          - service: merchant-web
+            dockerfile: merchant-web/Dockerfile
+          - service: nested-pos
+            dockerfile: mocks/nested-pos/Dockerfile
+          - service: flat-pos
+            dockerfile: mocks/flat-pos/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ matrix.service }}:ci
+
+  # --- vulnerability scan -----------------------------------------------
+  vuln-scan:
+    runs-on: ubuntu-latest
+    needs: build-images
+    strategy:
+      matrix:
+        service: [menu-service, availability-service, trace-collector, storefront-api, pos-ingest, merchant-web, nested-pos, flat-pos]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Rebuild image for scanning
+        run: |
+          case "${{ matrix.service }}" in
+            nested-pos) dockerfile=mocks/nested-pos/Dockerfile ;;
+            flat-pos) dockerfile=mocks/flat-pos/Dockerfile ;;
+            *) dockerfile=${{ matrix.service }}/Dockerfile ;;
+          esac
+          docker build -t ${{ matrix.service }}:ci -f "$dockerfile" .
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.service }}:ci
+          severity: CRITICAL
+          exit-code: "1"
+
+  # --- push (main only) ---------------------------------------------------
+  push:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: vuln-scan
+    strategy:
+      matrix:
+        include:
+          - service: menu-service
+            dockerfile: menu-service/Dockerfile
+          - service: availability-service
+            dockerfile: availability-service/Dockerfile
+          - service: trace-collector
+            dockerfile: trace-collector/Dockerfile
+          - service: storefront-api
+            dockerfile: storefront-api/Dockerfile
+          - service: pos-ingest
+            dockerfile: pos-ingest/Dockerfile
+          - service: merchant-web
+            dockerfile: merchant-web/Dockerfile
+          - service: nested-pos
+            dockerfile: mocks/nested-pos/Dockerfile
+          - service: flat-pos
+            dockerfile: mocks/flat-pos/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}:latest

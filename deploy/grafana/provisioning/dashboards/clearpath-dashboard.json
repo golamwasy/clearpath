@@ -1,0 +1,152 @@
+{
+  "id": null,
+  "uid": "clearpath-overview",
+  "title": "clearpath overview",
+  "description": "Request rate/error rate/latency for the four JVM services and pos-ingest, plus Kafka consumer lag, menu-service outbox backlog depth, and pos-ingest DLQ publish rate. See deploy/prometheus/prometheus.yml for scrape targets and CLAUDE.md/docs/adr/0005 for why DLQ depth is a rate, not a queue-depth gauge (nothing consumes pos.sync.dlq).",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "tags": ["clearpath"],
+  "panels": [
+    { "type": "row", "title": "HTTP", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100 },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Request rate (req/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ktor_http_server_requests_seconds_count[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(pos_ingest_http_requests_total[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Error rate (5xx fraction)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(ktor_http_server_requests_seconds_count{status=~\"5..\"}[5m])) by (job) / sum(rate(ktor_http_server_requests_seconds_count[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(pos_ingest_http_requests_total{status=~\"5..\"}[5m])) by (job) / sum(rate(pos_ingest_http_requests_total[5m])) by (job)",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Latency p50/p95/p99 — JVM services (menu/availability/trace-collector/storefront)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum(rate(ktor_http_server_requests_seconds_bucket[5m])) by (le, job))",
+          "legendFormat": "p50 {{job}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(ktor_http_server_requests_seconds_bucket[5m])) by (le, job))",
+          "legendFormat": "p95 {{job}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum(rate(ktor_http_server_requests_seconds_bucket[5m])) by (le, job))",
+          "legendFormat": "p99 {{job}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Latency p50/p95/p99 — pos-ingest",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum(rate(pos_ingest_http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p50 {{route}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(pos_ingest_http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p95 {{route}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum(rate(pos_ingest_http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "p99 {{route}}"
+        }
+      ]
+    },
+    { "type": "row", "title": "Kafka & backlogs", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }, "id": 200 },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Kafka consumer lag",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "kafka_consumer_lag",
+          "legendFormat": "{{group}} / {{topic}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "menu-service outbox backlog depth",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "menu_outbox_backlog",
+          "legendFormat": "unpublished outbox rows"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "pos-ingest DLQ publish rate",
+      "description": "A rate on a cumulative counter, not a queue-depth gauge — pos.sync.dlq has no consumer, so there's no consumer-group lag to compute a true depth from. See docs/adr/0005 and CLAUDE.md.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(pos_ingest_dlq_published_total[5m])",
+          "legendFormat": "dlq publishes/s"
+        }
+      ]
+    }
+  ]
+}

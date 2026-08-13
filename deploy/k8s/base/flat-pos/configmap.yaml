@@ -1,0 +1,11 @@
+# PORT/FAIL_EVERY_N/DELAY_MS collide on key name with nested-pos's own configmap (same keys,
+# different values), so each mock gets its own ConfigMap rather than sharing configmap-common.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flat-pos-config
+  namespace: clearpath
+data:
+  PORT: "9002"
+  FAIL_EVERY_N: "7"
+  DELAY_MS: "50"

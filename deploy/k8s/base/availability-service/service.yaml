@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: availability-service
+  namespace: clearpath
+  labels:
+    app: availability-service
+spec:
+  selector:
+    app: availability-service
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082

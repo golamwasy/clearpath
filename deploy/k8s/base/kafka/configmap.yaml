@@ -1,0 +1,35 @@
+# Kafka's own broker/controller config — not shared with any other service, so it stays local to
+# this component rather than in configmap-common.yaml.
+#
+# Per docker-compose.yml's own in-repo comment: in k8s, KAFKA_ADVERTISED_LISTENERS' "kafka:9092"
+# host is already correct as the short DNS name of the "kafka" Service in this namespace, and the
+# PLAINTEXT_HOST listener (docker-compose's host-port-mapping escape hatch) is dropped entirely —
+# nothing outside the cluster needs to reach Kafka directly the way docker-compose's host port
+# mapping did.
+#
+# KAFKA_CONTROLLER_QUORUM_VOTERS uses "localhost", not the "kafka" Service DNS name, even though
+# every other address in this file is the Service name — verified against a real local kind run:
+# pointing this at the Service sends the broker's own controller-registration traffic out to the
+# Service's ClusterIP and back again (a hairpin NAT round-trip through kube-proxy), which was
+# observed causing intermittent "channel manager timed out before sending the request" fatal
+# startup errors unrelated to CPU load. This is a single-node broker+controller (KAFKA_NODE_ID=1
+# is both), so the controller only ever needs to be reached by this same process — "localhost"
+# is correct here, not a shortcut, and avoids the hairpin entirely. A multi-broker cluster would
+# need real addresses for the other voters, but this repo only ever runs one broker (replication
+# factor 1 throughout).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-config
+  namespace: clearpath
+data:
+  KAFKA_NODE_ID: "1"
+  KAFKA_PROCESS_ROLES: "broker,controller"
+  KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+  KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+  KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+  KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+  KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"

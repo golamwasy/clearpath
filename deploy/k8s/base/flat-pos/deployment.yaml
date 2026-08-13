@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flat-pos
+  namespace: clearpath
+  labels:
+    app: flat-pos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flat-pos
+  template:
+    metadata:
+      labels:
+        app: flat-pos
+    spec:
+      containers:
+        - name: flat-pos
+          image: flat-pos:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9002
+          envFrom:
+            - configMapRef:
+                name: flat-pos-config
+          # Only /health exists on this mock (no /ready), so both probes use it.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "250m"

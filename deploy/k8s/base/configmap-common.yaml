@@ -1,0 +1,30 @@
+# Shared, non-secret config used by two or more app services (topic names, ports, CORS origin,
+# shared infra hostnames, poll intervals). Every app Deployment pulls this in via
+# envFrom.configMapRef; unused keys for a given service are harmless. Values genuinely specific
+# to one service (e.g. MONITORED_CONSUMER_GROUPS, or PORT for the two POS mocks which collide on
+# the same key with different values) live in that service's own configmap.yaml instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clearpath-config
+  namespace: clearpath
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  MENU_EVENTS_TOPIC: "menu.events"
+  SYSTEM_TRACE_TOPIC: "system.trace"
+  POS_SYNC_TOPIC: "pos.sync"
+  POS_SYNC_DLQ_TOPIC: "pos.sync.dlq"
+  CORS_ALLOWED_ORIGIN_HOST: "localhost:5173"
+  CORS_ALLOWED_ORIGIN: "http://localhost:5173"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  MENU_HTTP_PORT: "8081"
+  AVAILABILITY_HTTP_PORT: "8082"
+  TRACE_COLLECTOR_HTTP_PORT: "8084"
+  STOREFRONT_HTTP_PORT: "8085"
+  POS_HTTP_PORT: "8083"
+  AVAILABILITY_CONSUMER_GROUP: "availability-service"
+  TRACE_COLLECTOR_CONSUMER_GROUP: "trace-collector"
+  STOREFRONT_MENU_CACHE_TTL_SECONDS: "5"
+  # This repo has no production deployment — see docs/adr/0005-observability-ui.md.
+  CHAOS_ENABLED: "true"

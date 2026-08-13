@@ -1,0 +1,10 @@
+# MONGO_DATABASE is service-specific (availability-service and trace-collector each use a
+# different database name on the same shared Mongo instance), so it can't live in the shared
+# configmap-common.yaml without a key collision.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: availability-service-config
+  namespace: clearpath
+data:
+  MONGO_DATABASE: "availability"

@@ -1,0 +1,74 @@
+# Single-replica Deployment + emptyDir volume: disposable local kind demo, not a durability
+# story — see postgres/deployment.yaml for the same note.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: clearpath
+  labels:
+    app: kafka
+spec:
+  replicas: 1
+  # Verified against a real local kind run: the default RollingUpdate strategy briefly runs the
+  # old and new pod together, which is fatal for a singleton KRaft broker with a fixed node.id —
+  # both pods claim broker id 1 and fight over the controller role behind the same Service,
+  # neither ever stabilizing. Recreate guarantees the old pod is fully gone before the new one
+  # starts, which is what a fixed-identity singleton like this actually needs.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:3.8.0
+          ports:
+            - containerPort: 9092
+            - containerPort: 9093
+          envFrom:
+            - configMapRef:
+                name: kafka-config
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+          # Verified against a real local kind run: the original exec probe
+          # (kafka-broker-api-versions.sh) spins up a whole extra JVM per check. Under the CPU
+          # contention that makes Kafka's own KRaft startup slow on a laptop-scale node, those
+          # probe-spawned JVMs compete with the broker process for the same scarce CPU — a
+          # resource-starvation feedback loop where the health check itself was the thing
+          # preventing the checked process from ever becoming healthy (observed directly: the
+          # broker never printed its "started" log line, stuck re-registering with its own
+          # controller in a tight loop, until the exec probes were replaced with a plain TCP
+          # check). tcpSocket only confirms the port is accepting connections, not that the
+          # broker is fully caught up — an acceptable trade for a local single-broker demo where
+          # the alternative was never converging at all.
+          startupProbe:
+            tcpSocket:
+              port: 9092
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: 9092
+            periodSeconds: 10
+            failureThreshold: 10
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            periodSeconds: 10
+            failureThreshold: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: kafka-data
+          emptyDir: {}

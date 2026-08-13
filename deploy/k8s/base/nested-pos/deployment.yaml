@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nested-pos
+  namespace: clearpath
+  labels:
+    app: nested-pos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nested-pos
+  template:
+    metadata:
+      labels:
+        app: nested-pos
+    spec:
+      containers:
+        - name: nested-pos
+          image: nested-pos:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9001
+          envFrom:
+            - configMapRef:
+                name: nested-pos-config
+          # Only /health exists on this mock (no /ready), so both probes use it.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "250m"
