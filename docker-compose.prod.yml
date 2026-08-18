@@ -1,0 +1,226 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./docker/postgres-init.sh:/docker-entrypoint-initdb.d/postgres-init.sh
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  mongo:
+    image: mongo:7
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  nested-pos:
+    image: ghcr.io/golamwasy/nested-pos:latest
+    environment:
+      PORT: "9001"
+      FAIL_EVERY_N: "7"
+      DELAY_MS: "50"
+    networks:
+      - default
+
+  flat-pos:
+    image: ghcr.io/golamwasy/flat-pos:latest
+    environment:
+      PORT: "9002"
+      FAIL_EVERY_N: "7"
+      DELAY_MS: "50"
+    networks:
+      - default
+
+  menu-service:
+    image: ghcr.io/golamwasy/menu-service:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      MENU_DB_URL: jdbc:postgresql://postgres:5432/menu
+      MENU_DB_USER: menu
+      MENU_DB_PASSWORD: menu
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MENU_EVENTS_TOPIC: menu.events
+      SYSTEM_TRACE_TOPIC: system.trace
+      MENU_HTTP_PORT: "8081"
+      CORS_ALLOWED_ORIGIN_HOST: "clearpath.golamwasy.dev"
+    networks:
+      - default
+      - traefik-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.clearpath-menu.rule=Host(`clearpath.golamwasy.dev`) && PathPrefix(`/api/menu`)"
+      - "traefik.http.routers.clearpath-menu.entrypoints=web"
+      - "traefik.http.services.clearpath-menu.loadbalancer.server.port=8081"
+      - "traefik.http.middlewares.strip-menu.stripprefix.prefixes=/api/menu"
+      - "traefik.http.routers.clearpath-menu.middlewares=strip-menu"
+
+  availability-service:
+    image: ghcr.io/golamwasy/availability-service:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      AVAILABILITY_DB_URL: jdbc:postgresql://postgres:5432/availability
+      AVAILABILITY_DB_USER: availability
+      AVAILABILITY_DB_PASSWORD: availability
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MENU_EVENTS_TOPIC: menu.events
+      SYSTEM_TRACE_TOPIC: system.trace
+      AVAILABILITY_CONSUMER_GROUP: availability-service
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DATABASE: availability
+      AVAILABILITY_HTTP_PORT: "8082"
+      CORS_ALLOWED_ORIGIN_HOST: "clearpath.golamwasy.dev"
+    networks:
+      - default
+      - traefik-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.clearpath-avail.rule=Host(`clearpath.golamwasy.dev`) && PathPrefix(`/api/availability`)"
+      - "traefik.http.routers.clearpath-avail.entrypoints=web"
+      - "traefik.http.services.clearpath-avail.loadbalancer.server.port=8082"
+      - "traefik.http.middlewares.strip-avail.stripprefix.prefixes=/api/availability"
+      - "traefik.http.routers.clearpath-avail.middlewares=strip-avail"
+
+  trace-collector:
+    image: ghcr.io/golamwasy/trace-collector:latest
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SYSTEM_TRACE_TOPIC: system.trace
+      TRACE_COLLECTOR_CONSUMER_GROUP: trace-collector
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DATABASE: tracing
+      TRACE_COLLECTOR_HTTP_PORT: "8084"
+      CORS_ALLOWED_ORIGIN_HOST: "clearpath.golamwasy.dev"
+      MONITORED_CONSUMER_GROUPS: "availability-service:menu.events,trace-collector:system.trace"
+    networks:
+      - default
+      - traefik-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.clearpath-trace.rule=Host(`clearpath.golamwasy.dev`) && PathPrefix(`/api/trace`)"
+      - "traefik.http.routers.clearpath-trace.entrypoints=web"
+      - "traefik.http.services.clearpath-trace.loadbalancer.server.port=8084"
+      - "traefik.http.middlewares.strip-trace.stripprefix.prefixes=/api/trace"
+      - "traefik.http.routers.clearpath-trace.middlewares=strip-trace"
+
+  pos-ingest:
+    image: ghcr.io/golamwasy/pos-ingest:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      nested-pos:
+        condition: service_started
+      flat-pos:
+        condition: service_started
+    environment:
+      POS_DB_URL: postgres://pos_ingest:pos_ingest@postgres:5432/pos_ingest
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      POS_SYNC_TOPIC: pos.sync
+      POS_SYNC_DLQ_TOPIC: pos.sync.dlq
+      SYSTEM_TRACE_TOPIC: system.trace
+      POS_HTTP_PORT: "8083"
+      CORS_ALLOWED_ORIGIN: "https://clearpath.golamwasy.dev"
+      POS_MAX_CONCURRENCY: "5"
+      POS_POLL_INTERVAL: 30s
+      POS_MAX_RETRIES: "4"
+      POS_RETRY_BASE_DELAY: 200ms
+      POS_RETRY_MAX_DELAY: 10s
+      POS_VENUES_CONFIG: /app/venues.json
+    volumes:
+      - ./pos-ingest/venues.json:/app/venues.json:ro
+    networks:
+      - default
+      - traefik-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.clearpath-pos.rule=Host(`clearpath.golamwasy.dev`) && PathPrefix(`/api/pos`)"
+      - "traefik.http.routers.clearpath-pos.entrypoints=web"
+      - "traefik.http.services.clearpath-pos.loadbalancer.server.port=8083"
+      - "traefik.http.middlewares.strip-pos.stripprefix.prefixes=/api/pos"
+      - "traefik.http.routers.clearpath-pos.middlewares=strip-pos"
+
+  merchant-web:
+    image: ghcr.io/golamwasy/merchant-web:latest
+    depends_on:
+      - menu-service
+      - availability-service
+      - pos-ingest
+      - trace-collector
+    networks:
+      - default
+      - traefik-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.clearpath-app.rule=Host(`clearpath.golamwasy.dev`)"
+      - "traefik.http.routers.clearpath-app.entrypoints=web"
+      - "traefik.http.services.clearpath-app.loadbalancer.server.port=8080"
+
+networks:
+  traefik-net:
+    external: true
+
+volumes:
+  postgres-data:
