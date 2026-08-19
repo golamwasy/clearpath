@@ -310,10 +310,10 @@ jobs:
           file: merchant-web/Dockerfile
           push: true
           build-args: |
-            VITE_MENU_API_URL=/api/menu
-            VITE_AVAILABILITY_API_URL=/api/availability
-            VITE_POS_API_URL=/api/pos
-            VITE_TRACE_API_URL=/api/trace
+            VITE_MENU_API_URL=https://clearpath.golamwasy.dev/api/menu
+            VITE_AVAILABILITY_API_URL=https://clearpath.golamwasy.dev/api/availability
+            VITE_POS_API_URL=https://clearpath.golamwasy.dev/api/pos
+            VITE_TRACE_API_URL=https://clearpath.golamwasy.dev/api/trace
             VITE_DEFAULT_VENUE_ID=${{ vars.CLEARPATH_VENUE_ID }}
           tags: |
             ghcr.io/${{ github.repository_owner }}/merchant-web:latest
