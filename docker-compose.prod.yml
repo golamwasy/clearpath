@@ -1,63 +1,27 @@
 services:
   postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    volumes:
-      - ./docker/postgres-init.sh:/docker-entrypoint-initdb.d/postgres-init.sh
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    ports: !reset []
     networks:
       - default
 
   redis:
-    image: redis:7-alpine
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    ports: !reset []
     networks:
       - default
 
   mongo:
-    image: mongo:7
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    ports: !reset []
     networks:
       - default
 
   kafka:
-    image: apache/kafka:3.8.0
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    ports: !reset []
     networks:
       - default
 
   nested-pos:
     image: ghcr.io/golamwasy/nested-pos:latest
+    ports: !reset []
     environment:
       PORT: "9001"
       FAIL_EVERY_N: "7"
@@ -67,6 +31,7 @@ services:
 
   flat-pos:
     image: ghcr.io/golamwasy/flat-pos:latest
+    ports: !reset []
     environment:
       PORT: "9002"
       FAIL_EVERY_N: "7"
@@ -76,6 +41,7 @@ services:
 
   menu-service:
     image: ghcr.io/golamwasy/menu-service:latest
+    ports: !reset []
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,6 +69,7 @@ services:
 
   availability-service:
     image: ghcr.io/golamwasy/availability-service:latest
+    ports: !reset []
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,6 +106,7 @@ services:
 
   trace-collector:
     image: ghcr.io/golamwasy/trace-collector:latest
+    ports: !reset []
     depends_on:
       kafka:
         condition: service_healthy
@@ -166,6 +134,7 @@ services:
 
   pos-ingest:
     image: ghcr.io/golamwasy/pos-ingest:latest
+    ports: !reset []
     depends_on:
       postgres:
         condition: service_healthy
@@ -204,6 +173,7 @@ services:
 
   merchant-web:
     image: ghcr.io/golamwasy/merchant-web:latest
+    ports: !reset []
     depends_on:
       - menu-service
       - availability-service
