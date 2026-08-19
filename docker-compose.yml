@@ -238,6 +238,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.1
+    profiles: ["monitoring"]
     ports:
       - "9090:9090"
     volumes:
@@ -245,6 +246,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.2.0
+    profiles: ["monitoring"]
     ports:
       - "3000:3000"
     volumes:
