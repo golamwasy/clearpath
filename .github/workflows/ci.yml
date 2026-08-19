@@ -264,8 +264,6 @@ jobs:
             dockerfile: storefront-api/Dockerfile
           - service: pos-ingest
             dockerfile: pos-ingest/Dockerfile
-          - service: merchant-web
-            dockerfile: merchant-web/Dockerfile
           - service: nested-pos
             dockerfile: mocks/nested-pos/Dockerfile
           - service: flat-pos
