@@ -1,26 +1,31 @@
 services:
   postgres:
+    restart: unless-stopped
     ports: !reset []
     networks:
       - default
 
   redis:
+    restart: unless-stopped
     ports: !reset []
     networks:
       - default
 
   mongo:
+    restart: unless-stopped
     ports: !reset []
     networks:
       - default
 
   kafka:
+    restart: unless-stopped
     ports: !reset []
     networks:
       - default
 
   nested-pos:
     image: ghcr.io/golamwasy/nested-pos:latest
+    restart: unless-stopped
     ports: !reset []
     environment:
       PORT: "9001"
@@ -31,6 +36,7 @@ services:
 
   flat-pos:
     image: ghcr.io/golamwasy/flat-pos:latest
+    restart: unless-stopped
     ports: !reset []
     environment:
       PORT: "9002"
@@ -41,6 +47,7 @@ services:
 
   menu-service:
     image: ghcr.io/golamwasy/menu-service:latest
+    restart: unless-stopped
     ports: !reset []
     depends_on:
       postgres:
@@ -69,6 +76,7 @@ services:
 
   availability-service:
     image: ghcr.io/golamwasy/availability-service:latest
+    restart: unless-stopped
     ports: !reset []
     depends_on:
       postgres:
@@ -106,6 +114,7 @@ services:
 
   trace-collector:
     image: ghcr.io/golamwasy/trace-collector:latest
+    restart: unless-stopped
     ports: !reset []
     depends_on:
       kafka:
@@ -134,6 +143,7 @@ services:
 
   pos-ingest:
     image: ghcr.io/golamwasy/pos-ingest:latest
+    restart: unless-stopped
     ports: !reset []
     depends_on:
       postgres:
@@ -173,6 +183,7 @@ services:
 
   merchant-web:
     image: ghcr.io/golamwasy/merchant-web:latest
+    restart: unless-stopped
     ports: !reset []
     depends_on:
       - menu-service
